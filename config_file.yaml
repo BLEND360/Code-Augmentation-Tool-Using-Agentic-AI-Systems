@@ -1,0 +1,25 @@
+snowflake:
+  account: "XXXXXX"
+  user: "XXXXXX"
+  authenticator: "externalbrowser"
+  database: "SANDBOX"
+  schema: "DS"
+
+databricks:
+  server_hostname: "XXXXXX"
+  http_path: "/sql/1.0/warehouses/0f76c12366c1c229"
+  access_token: "XXXXXX"
+  database: "nbcu_demo"
+
+validation:
+  unique_columns:
+    NBCU_CUSTOMERS: "customer_id"
+    NBCU_DEPARTMENTS: "department_id"
+    NBCU_EMPLOYEES: "employee_id"
+    NBCU_PRODUCTS: "product_id"
+    NBCU_PROJECTS: "project_id"
+    NBCU_SALES: "sale_id"
+    NBCU_SUPPLIERS: "supplier_id"
+    NBCU_SUPPLY_CHAIN: "supply_chain_id"
+
+
