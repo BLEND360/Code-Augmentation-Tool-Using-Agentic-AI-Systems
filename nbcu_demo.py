@@ -6,14 +6,21 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 import os
 import streamlit as st
-
+from services.validation_engine import validate_query_across_engines
+from services.connection_utils import connect_to_snowflake, connect_to_databricks
+import yaml
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+# 🔹 Load YAML config
+with open("services/config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
 class ConverterState(TypedDict):
     input_query: str
     ast: Annotated[Union[dict, str, None], None]
     final_sql: Annotated[str, None]
+    validation_result: Annotated[Union[dict, None], None]
 
 
 llm = ChatOpenAI(
@@ -281,8 +288,6 @@ workflow.add_edge("SyntaxValidatorAgent", END)
 
 app = workflow.compile()
 
-
-
 def convert_snowflake_to_ansi(sql_query: str):
 
     intermediate_results = {}
@@ -295,10 +300,28 @@ def convert_snowflake_to_ansi(sql_query: str):
     )
 
     final_state = app.invoke(initial_state)
-
-    intermediate_results["AST"] = final_state.get("ast", {})
     
+    # Run validation on final SQL
+    efficient_sql = final_state.get("final_sql", "")
+    if efficient_sql:
+        conn_sf = connect_to_snowflake(config["snowflake"])
+        conn_db = connect_to_databricks(config["databricks"])
+        
+        validation_result = validate_query_across_engines(efficient_sql, conn_sf, conn_db)
+
+        # Save validation result in state and intermediates
+        final_state["validation_result"] = validation_result
+        intermediate_results["Validation_Result"] = validation_result
+
+        # Close DB connections
+        conn_sf.close()
+        conn_db.close()
+
+    # Always store AST
+    intermediate_results["AST"] = final_state.get("ast", {})
+
     return final_state["final_sql"], intermediate_results
+
 
 
 
@@ -377,3 +400,12 @@ if user_question:
                     if step_name == "AST":
                         st.subheader("AST Tree")
                         st.json(step_result)  # Display AST as JSON
+                    elif step_name == "Validation_Result":
+                        st.subheader("Validation Against Both Databases")
+                        if step_result.get("validation_status") == "success":
+                            st.success("✅ Query output matched in both Snowflake and Databricks.")
+                        else:
+                            st.error("❌ Validation failed!")
+                            for issue in step_result.get("failed_checks", []):
+                                st.markdown(f"- **{issue['check']}**: {issue['reason']}")
+
