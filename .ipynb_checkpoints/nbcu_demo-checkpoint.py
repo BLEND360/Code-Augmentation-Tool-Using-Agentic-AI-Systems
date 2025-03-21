@@ -284,6 +284,15 @@ workflow.add_edge("SyntaxValidatorAgent", END)
 
 app = workflow.compile()
 
+# 🔹 Load YAML config
+with open("services/config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+# 🔹 Setup connections
+conn_sf = connect_to_snowflake(config["snowflake"])
+conn_db = connect_to_databricks(config["databricks"])
+
+
 
 
 def convert_snowflake_to_ansi(sql_query: str):
