@@ -12,6 +12,10 @@ import yaml
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
+# 🔹 Load YAML config
+with open("services/config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
 class ConverterState(TypedDict):
     input_query: str
     ast: Annotated[Union[dict, str, None], None]
@@ -284,17 +288,6 @@ workflow.add_edge("SyntaxValidatorAgent", END)
 
 app = workflow.compile()
 
-# 🔹 Load YAML config
-with open("services/config.yaml", "r") as f:
-    config = yaml.safe_load(f)
-
-# 🔹 Setup connections
-conn_sf = connect_to_snowflake(config["snowflake"])
-conn_db = connect_to_databricks(config["databricks"])
-
-
-
-
 def convert_snowflake_to_ansi(sql_query: str):
 
     intermediate_results = {}
@@ -310,13 +303,22 @@ def convert_snowflake_to_ansi(sql_query: str):
     
     # Run validation on final SQL
     efficient_sql = final_state.get("final_sql", "")
-    validation_result = validate_query_across_engines(efficient_sql, conn_sf, conn_db)
+    if efficient_sql:
+        conn_sf = connect_to_snowflake(config["snowflake"])
+        conn_db = connect_to_databricks(config["databricks"])
+        
+        validation_result = validate_query_across_engines(efficient_sql, conn_sf, conn_db)
 
-    final_state["validation_result"] = validation_result
+        # Save validation result in state and intermediates
+        final_state["validation_result"] = validation_result
+        intermediate_results["Validation_Result"] = validation_result
 
-    # Add intermediate steps
+        # Close DB connections
+        conn_sf.close()
+        conn_db.close()
+
+    # Always store AST
     intermediate_results["AST"] = final_state.get("ast", {})
-    intermediate_results["Validation_Result"] = validation_result
 
     return final_state["final_sql"], intermediate_results
 
