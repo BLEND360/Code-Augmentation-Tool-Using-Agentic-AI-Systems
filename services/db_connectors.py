@@ -1,3 +1,6 @@
+import pandas as pd
+from databricks import sql  # ✅ Ensure this import is present
+import snowflake.connector
 def connect_to_snowflake(sf_config):
     return snowflake.connector.connect(
         user=sf_config["user"],

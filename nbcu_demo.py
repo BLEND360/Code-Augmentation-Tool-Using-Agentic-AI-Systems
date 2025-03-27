@@ -6,14 +6,16 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 import os
 import streamlit as st
+from databricks import sql  
+import snowflake.connector
 from services.validation_engine import validate_query_across_engines
-from services.connection_utils import connect_to_snowflake, connect_to_databricks
+from services.db_connectors import connect_to_snowflake, connect_to_databricks
 import yaml
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 # 🔹 Load YAML config
-with open("services/config.yaml", "r") as f:
+with open("services/config_file.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 class ConverterState(TypedDict):
