@@ -6,8 +6,8 @@ snowflake:
   schema: "DS"
 
 databricks:
-  server_hostname: "dbc-ff1901e9-f7d0.cloud.databricks.com"
-  http_path: "/sql/1.0/warehouses/0f76c12366c1c229"
+  server_hostname: "xx-xxxx.cloud.databricks.com"
+  http_path: "/sql/1.0/warehouses/xxxxx"
   access_token: "xxxxx"
   database: "nbcu_demo"
 
