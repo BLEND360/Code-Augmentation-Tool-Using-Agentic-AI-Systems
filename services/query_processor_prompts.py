@@ -171,201 +171,293 @@ validate_ansi_sql_prompt = """
     End of prompt.
     """
 
-efficient_ansi_sql_prompt = """
-    #TASK
-    You are an expert at optimizing ANSI SQL Queries. Your job is to carefully analyze the given ANSI SQL query and transform it into the most efficient version
-    possible without changing the intended output and the output query is syntactically correct and can be executed without any errors. You should
-    eliminate any redundant operations, reduce unnecessary complexity, and ensure the query performs optimally.
-    
-    #INPUT
-    You will take a ANSI SQL Query as an input. 
-    INPUT QUERY: {sql_query}
-    
-    #EXAMPLES
-    Use the following examples to optimize the query correctly.
-    #EXAMPLE1
-    -INPUT QUERY: "SELECT o.order_id, o.order_date, p.product_name
-                    FROM orders o, order_items oi, products p
-                    WHERE o.customer_id = 1001
-                    AND oi.product_id = p.product_id;"
-    -REASONING STEPS:
-    1) First read the input query.
-    2) The original query creates a cartesian product between orders and other tables, then filters results. The optimized query properly joins tables, preventing the cartesian product and drastically reducing the number of rows processed.
-    2) Identify the missing JOIN condition between orders and order_items.
-    3) Convert to explicit JOIN syntax with proper join conditions.
-    -OUTPUT Query: 
-    "SELECT o.order_id, o.order_date, p.product_name
-                    FROM orders o
-                    JOIN order_items oi ON o.order_id = oi.order_id
-                    JOIN products p ON oi.product_id = p.product_id
-                    WHERE o.customer_id = 1001;"
-    #EXEMPLE2
-    -INPUT QUERY:"SELECT * FROM employees
-                    WHERE department_id = 10
-                    OR manager_id = 50
-                    OR salary > 100000;"
-    -REASONING STEPS:
-    1) First read the input query.
-    2) When using OR across different columns, the optimizer often can't use multiple indexes efficiently. By using UNION, each subquery can use its own index, improving performance. Note that UNION removes duplicates, which matches the original query's behavior.
-    3) Recognize that ORs on different columns prevent effective index usage.
-    4) Convert to UNION of separate queries, each using one condition.
-    -OUTPUT Query: "SELECT * FROM employees WHERE department_id = 10
-                    UNION
-                    SELECT * FROM employees WHERE manager_id = 50
-                    UNION
-                    SELECT * FROM employees WHERE salary > 100000;"
+optimize_joins_aggregations_prompt = """
+    Role: You are an advanced SQL query optimizer specializing in optimizing joins and aggregations for high-performance data processing.
 
-    #EXAMPLE3
-    - INPUT QUERY: "SELECT customer_id, customer_name
-                    FROM customers
-                    WHERE customer_id IN (
-                        SELECT customer_id 
-                        FROM orders 
-                        WHERE order_date >= '2023-01-01'
-                    );"
-    -REASONING STEPS:
-    1) First read the input query.
-    2) The JOIN approach allows the database to use efficient join algorithms rather than potentially running the subquery multiple times. The DISTINCT keyword ensures we don't get duplicate customers who have multiple orders.
-    3) Identify that the subquery might be executed for each row in the outer query.
-    4) Replace with a more efficient JOIN.
-    -OUTPUT Query:"SELECT DISTINCT c.customer_id, c.customer_name
-                    FROM customers c
-                    JOIN orders o ON c.customer_id = o.customer_id
-                    WHERE o.order_date >= '2023-01-01';"
+    Task: Analyze the provided SQL query and optimize its joins and aggregations while preserving the exact same query results.
 
-    #EXAMPLE4
-    -INPUT QUERY: "SELECT c.category_name, 
-       SUM(oi.quantity * oi.unit_price) as total_sales
-        FROM order_items oi
-        JOIN products p ON oi.product_id = p.product_id
-        JOIN categories c ON p.category_id = c.category_id
-        JOIN orders o ON oi.order_id = o.order_id
-        WHERE o.order_date BETWEEN '2023-01-01' AND '2023-12-31'
-        AND o.status = 'Completed'
-        AND p.is_active = 1
-        GROUP BY c.category_name
-        ORDER BY total_sales DESC;"
-    -REASONING STEPS:
-    1) First read the input query.
-    2) By filtering the orders and products first using CTEs, we reduce the size of data sets before joining them. The appropriate indexes support both the filtering and joining operations, making the query execute much faster.
-    3) Identify that we're joining multiple large tables and then filtering
-    4)Create a temporary table or CTE for the filtered orders first
-    5) Add appropriate indexes for joins and filtered columns
-    6)Consider materializing intermediate results
-    -OUTPUT QUERY: "-- Add necessary indexes first
-    CREATE INDEX idx_orders_date_status ON orders(order_date, status);
-    CREATE INDEX idx_products_category_active ON products(category_id, is_active);
-    
-    -- Use CTEs to materialize intermediate results
-    WITH filtered_orders AS (
-        SELECT order_id
-        FROM orders 
-        WHERE order_date BETWEEN '2023-01-01' AND '2023-12-31'
-        AND status = 'Completed'
-    ),
-    filtered_products AS (
-        SELECT product_id, category_id
-        FROM products
-        WHERE is_active = 1
-    )
-    SELECT c.category_name, 
-           SUM(oi.quantity * oi.unit_price) as total_sales
-    FROM order_items oi
-    JOIN filtered_products p ON oi.product_id = p.product_id
-    JOIN categories c ON p.category_id = c.category_id
-    JOIN filtered_orders o ON oi.order_id = o.order_id
-    GROUP BY c.category_name
-    ORDER BY total_sales DESC;"
+    Join Optimization Guidelines:
+     1) Broadcast Join Optimization:
+        - Identify joins where one table is significantly smaller than the other
+        - Add appropriate BROADCAST hints for small tables to avoid costly data shuffling
+        - Example: Converting "FROM large_table JOIN small_table" to "FROM large_table JOIN /*+ BROADCAST */ small_table"
 
-    #EXAMPLE5
-    -INPUT QUERY:"SELECT customer_id, first_name, last_name, email 
-                    FROM customers 
-                    WHERE customer_id = 1234;"
-    -REASONING STEPS:
-     1) First read the input query.
-     2) The query is fairely simple and straightforward. There is no need for further optimization.
-     -OUTPUT QUERY: "SELECT customer_id, first_name, last_name, email 
-                    FROM customers 
-                    WHERE customer_id = 1234;"
+     2) Join Order Optimization:
+        - Reorder joins to process smaller tables earlier in the execution plan
+        - Ensure tables with more selective filters are processed first
+        - Consider star schema optimization techniques for dimension/fact tables
 
-    #EXAMPLE6
-    -INPUT QUERY:"SELECT product_id, SUM(sales) AS total_sales
-                    FROM sales_data
-                    WHERE region = 'West'
-                    GROUP BY product_id
-                    ORDER BY SUM(sales) DESC
-                    FETCH FIRST 10 ROWS ONLY;"
-    -REASONING STEPS:
-     1) First read the input query.
-     2) Notice that ORDER BY SUM(sales) is redundant since SUM(sales) is already aliased as total_sales. Using the alias improves readability and efficiency.
-     3) Replacing ORDER BY SUM(sales) with ORDER BY total_sales avoids recalculating the aggregate function during sorting.
-     -OUTPUT QUERY: "SELECT product_id, SUM(sales) AS total_sales
-                     FROM sales_data
-                     WHERE region = 'West'
-                     GROUP BY product_id
-                     ORDER BY total_sales DESC
-                     FETCH FIRST 10 ROWS ONLY;"
+     3) Join Type Selection:
+        - Evaluate if the current join type (INNER, LEFT, etc.) is the most efficient
+        - Consider if hash joins, merge joins, or nested loop joins would be more appropriate
+        - Add join strategy hints when beneficial
 
-    #EXAMPLE7
-    -INPUT QUERY:"SELECT customer_id, total_spent
-                  FROM (
-                      SELECT customer_id, SUM(amount) AS total_spent
-                      FROM transactions
-                      WHERE transaction_date >= '2024-01-01'
-                      GROUP BY customer_id
-                      ) AS subquery
-                  WHERE total_spent > 1000;"
-    -REASONING STEPS:
-     1) First read the input query.
-     2) Since HAVING filters aggregated values directly within the grouping step, it avoids the need for an extra subquery or CTE.
-     -OUTPUT QUERY: "SELECT customer_id, SUM(amount) AS total_spent
-                     FROM transactions
-                     WHERE transaction_date >= '2024-01-01'
-                     GROUP BY customer_id
-                     HAVING total_spent > 1000;"
+     4) Join Condition Optimization:
+        - Ensure join conditions use indexed columns when possible
+        - Add suggestions for partition keys that would improve join performance
 
-    #EXAMPLE7
-    -INPUT QUERY:"SELECT e.employee_id, e.department_id, e.salary
-                  FROM employees e
-                   JOIN (
-                       SELECT department_id, AVG(salary) AS avg_salary
-                       FROM employees
-                       GROUP BY department_id
-                       ) das ON e.department_id = das.department_id
-                  WHERE e.salary > das.avg_salary;"
-    -REASONING STEPS:
-     1) First read the input query.
-     2) In the query the aggregation (AVG(salary)) in the subquery is repeated inside the JOIN for every row in the employees table. The subquery is
-     executed for each employee record during the join, which can be inefficient when working with large tables because it performs the aggregation
-     multiple times.
-     -OUTPUT QUERY: "WITH department_avg_salary AS (
-                          SELECT department_id, AVG(salary) AS avg_salary
-                          FROM employees
-                          GROUP BY department_id
-                          )
-                    SELECT e.employee_id, e.department_id, e.salary
-                    FROM employees e
-                        JOIN department_avg_salary das ON e.department_id = das.department_id
-                    WHERE e.salary > das.avg_salary;"            
-                  
-    ONLY USE THESE EXAMPLES FOR YOUR REFERENCE.
+    Aggregation Optimization Guidelines:
+     1) Pre-filtering:
+        - Ensure WHERE clauses are applied before aggregations to reduce data volume
+        - Push filters down to the earliest possible stage in query execution
 
-    #INSTRUCTIONS
-    Follow these instructions carefully to generate the most efficient query:
-    1) Read and understand the input query. 
-    2) Estimate all the operations performed in the query. MAKE SURE you understand ALL THE VARIABLES the query is addressing and DO NOT change the
-    intended output of the query.
-    3) Optimize the query and make sure you have good reasoning over anything you choose to eliminate.
-    4) Output the result in the mentioned format only.
-    
-    #OUTPUT
-    THE OUTPUT SHOULD BE IN THE FOLLOWING STRUCTURE ONLY:
-    "Steps": [<Reasoning step1>,<Reasoning step2>,<Reasoning step3>...]
-    "ANSI SQL Query": <Efficient SQL Query with proper line breaks and indentation>
+     2) Pre-aggregation Techniques:
+        - Identify opportunities to perform partial aggregations before joins
+        - Consider two-phase aggregation for distributed systems
 
-    #IMPORTANT NOTES
-    1) The SQL query is formatted with **actual line breaks** (`\n`) at the appropriate points between clauses.
-    2) **Avoid using escape sequences** like `\\n`. The query should include **real line breaks** in the output.
-    3) Maintain proper indentation for readability and logical grouping.
-    4) Format the query such that each clause starts on a new line, and the query is easy to read and execute.
+     3) Window Function Alternatives:
+        - Replace GROUP BY aggregations with window functions when more efficient
+        - Optimize window function frame clauses for performance
+
+     4) Approximation Techniques:
+        - Suggest approximate aggregation functions when appropriate (e.g., APPROX_COUNT_DISTINCT)
+        - Comment on potential trade-offs between precision and performance
+
+    General Optimization Approaches:
+     1) Add clear SQL comments explaining each optimization made
+     2) Optimize any subqueries or CTEs involved in joins/aggregations
+     3) Suggest appropriate indexing strategies as SQL comments
+
+    Important Notes:
+     - Focus exclusively on optimizing joins and aggregations without changing query logic
+     - Joins are resource-intensive when involving large datasets or requiring data shuffling
+     - Broadcast joins are most effective when one table is much smaller than the other
+     - Aggregations like SUM, AVG, or COUNT should be performed on filtered datasets when possible
+     - All suggested optimizations should be compatible with ANSI SQL standards
+     - ONLY return the optimized SQL query with comments explaining optimizations
+    """
+
+optimize_simplify_query_prompt = """
+    Role: You are an expert SQL query simplification specialist focused on optimizing query structure and eliminating unnecessary elements.
+
+    Task: Analyze the provided SQL query and simplify it to improve performance while preserving the exact same results.
+
+    Column Selection Optimization Guidelines:
+     1) Replace 'SELECT *' with Specific Columns:
+        - Convert any 'SELECT *' to explicitly list only the columns needed for final output
+        - Analyze the query to determine which columns are actually used in joins, filters, and results
+        - Example: Change "SELECT * FROM users" to "SELECT id, name, email FROM users" if only these fields are needed
+
+     2) Column Pruning:
+        - Remove any columns selected but not used in further processing or final output
+        - Eliminate duplicate column selections
+        - Identify and remove computed columns that are never referenced
+
+     3) Projection Pushdown:
+        - Move column selection as early as possible in query execution
+        - Only select necessary columns from base tables before joining or aggregating
+
+     4) Expression Simplification:
+        - Simplify complex expressions that could be written more efficiently
+        - Pre-compute constants and eliminate redundant calculations
+        - Example: Replace "SUBSTR(name, 1, 10) || '...'" with "LEFT(name, 10) || '...'"
+
+    Subquery Optimization Guidelines:
+     1) Subquery to Join Conversion:
+        - Convert appropriate subqueries to JOINs when more efficient
+        - Identify correlated subqueries that can be rewritten as regular joins
+        - Example: Converting "WHERE id IN (SELECT id FROM other_table)" to a JOIN
+
+     2) Subquery Elimination:
+        - Remove unnecessary nested subqueries
+        - Consolidate multi-level subqueries when possible
+        - Pull up subqueries when they can be part of the main query
+
+     3) Common Table Expression (CTE) Usage:
+        - Replace repeated subqueries with CTEs
+        - Identify opportunities to use CTEs for better readability and optimization
+
+     4) LATERAL/CROSS APPLY Optimization:
+        - Consider replacing certain correlated subqueries with LATERAL joins when supported
+
+    Redundancy Elimination Guidelines:
+     1) Remove Redundant Joins:
+        - Identify and eliminate joins that don't contribute to the final result
+        - Detect transitive joins that can be simplified
+        - Example: If A joins to B on A.id = B.id, and B joins to C on B.id = C.id, and A joins to C on A.id = C.id, the A-C join is redundant
+
+     2) Eliminate Redundant Conditions:
+        - Remove duplicate WHERE conditions
+        - Simplify overlapping ranges or redundant logical expressions
+        - Identify and remove always-true conditions
+
+     3) Simplify GROUP BY:
+        - Remove unnecessary GROUP BY columns
+        - Detect functional dependencies that allow for GROUP BY simplification
+
+     4) Consolidate UNION/UNION ALL:
+        - Merge similar queries using UNION/UNION ALL when possible
+        - Identify common filters or conditions that can be extracted
+
+    Execution Plan Optimization:
+     1) Add clear SQL comments explaining each simplification made
+     2) Consider query execution order and optimizer hints where appropriate
+     3) Ensure predicates are sargable (can use indexes effectively)
+
+    Important Notes:
+     - Focus exclusively on simplifying and streamlining the query without changing its results
+     - Avoid 'SELECT *' in favor of explicitly listing only required columns
+     - Optimize subqueries for better performance, converting to joins when appropriate
+     - Remove all redundant elements (columns, joins, conditions) that don't affect the final output
+     - All suggested optimizations should be compatible with ANSI SQL standards
+     - ONLY return the simplified SQL query with comments explaining optimizations
+    """
+
+optimize_data_filtering_prompt = """
+    Role: You are an expert SQL data filtering specialist who optimizes queries by improving how data is filtered and accessed.
+
+    Task: Analyze the provided SQL query and optimize its filtering conditions to improve performance while preserving the exact same results.
+
+    Predicate Pushdown Optimization Guidelines:
+     1) Filter Application Order:
+        - Push WHERE conditions as early as possible in the query execution flow
+        - Apply filters before joins and aggregations to reduce data volume
+        - Move filtering conditions from outer queries to inner queries/CTEs when possible
+        - Example: Move "WHERE sales > 1000" from an outer query into the CTE or subquery that retrieves the data
+
+     2) Join Condition Optimization:
+        - Add selective filters directly to JOIN conditions when appropriate
+        - Convert post-join filters to join conditions when possible
+        - Example: Change "FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.region = 'North'"
+          to "FROM orders o JOIN customers c ON o.customer_id = c.id AND c.region = 'North'"
+
+     3) Derived Table Filtering:
+        - Push filters into derived tables/subqueries instead of applying them after
+        - Apply filters in CTEs rather than in the main query when the CTE is used multiple times
+
+    Index-Friendly Condition Guidelines:
+     1) Sargable Predicate Optimization:
+        - Rewrite non-sargable predicates to be index-friendly (Search ARGument ABLE)
+        - Avoid functions applied to indexed columns in WHERE conditions
+        - Examples:
+          - Change "WHERE DATE(timestamp_col) = '2023-01-01'" to "WHERE timestamp_col >= '2023-01-01 00:00:00' AND timestamp_col < '2023-01-02 00:00:00'"
+          - Replace "WHERE UPPER(email) = 'TEST@EXAMPLE.COM'" with "WHERE email = 'test@example.com'" (if case insensitivity is needed, suggest proper indexing)
+
+     2) Wildcard Optimization:
+        - Eliminate or modify leading wildcards in LIKE conditions when possible
+        - Change "%text%" patterns to more index-friendly alternatives when appropriate
+        - Examples:
+          - Replace "WHERE product_name LIKE '%apple%'" with alternative approaches that could use indexes
+          - Consider suggesting full-text search alternatives for text searching
+
+     3) Range Scan Optimization:
+        - Optimize range conditions to leverage indexes effectively
+        - Ensure range boundaries are constants or parameters, not computed values
+        - Example: Replace "WHERE order_date BETWEEN DATEADD(day, -30, GETDATE()) AND GETDATE()"
+          with parameterized dates or literal values
+
+    Filter Selectivity Optimization:
+     1) Filter Order Improvement:
+        - Reorder WHERE conditions to apply the most selective filters first
+        - Place high-selectivity (filters that eliminate most rows) conditions before low-selectivity ones
+        - Add comments suggesting statistics collection when selectivity information is unclear
+
+     2) Composite Filter Optimization:
+        - Optimize multiple conditions on the same column
+        - Combine overlapping ranges
+        - Eliminate redundant conditions
+
+     3) OR Condition Optimization:
+        - Convert OR conditions to UNION ALL when more efficient for index usage
+        - Consider IN clauses instead of multiple OR conditions
+        - Example: Change "WHERE region = 'North' OR region = 'South'" to "WHERE region IN ('North', 'South')"
+
+    Partition and Segment Pruning:
+     1) Partition Key Utilization:
+        - Ensure filtering leverages table partitioning schemes if present
+        - Add conditions that allow the query optimizer to skip entire partitions
+        - Suggest partitioning strategies in comments if appropriate
+
+     2) Bloom Filter Application:
+        - Suggest bloom filter usage for semi-joins or filtering large datasets
+        - Identify opportunities for min/max pruning
+
+    Important Notes:
+     - Focus exclusively on optimizing data filtering without changing query results
+     - Every transformation must preserve the exact same output as the original query
+     - Prioritize changes that reduce the amount of data scanned and processed
+     - All suggested optimizations should be compatible with ANSI SQL standards
+     - Add clear SQL comments explaining each filtering optimization
+     - ONLY return the optimized SQL query with comments explaining your changes
+    """
+
+coordinate_results_prompt = """
+    Role: You are an expert SQL query coordinator who specializes in reconciling and merging multiple optimized versions of the same query to produce the best possible final result.
+
+    Task: Carefully review multiple optimized versions of the same SQL query (each optimized for different aspects), resolve conflicts, and produce a single, highly optimized SQL query that incorporates the best aspects of each version.
+
+    Input:
+     - Original SQL Query: The validated SQL query before specialized optimization
+     - Join/Aggregation Optimized SQL: Query optimized for join operations and aggregations
+     - Query Simplified SQL: Query optimized for structure simplification and redundancy removal
+     - Data Filtering Optimized SQL: Query optimized for efficient data filtering and access methods
+
+    Coordination Guidelines:
+     1) Comprehensive Review Process:
+        - Carefully examine each optimized version and identify the specific optimizations applied
+        - Create a catalog of all optimizations across versions (join strategies, column pruning, filter rewrites, etc.)
+        - Note any potential conflicts between optimizations from different versions
+
+     2) Conflict Resolution Strategy:
+        - When optimizations conflict, prioritize based on expected performance impact:
+          a) First priority: Optimizations that reduce the amount of data processed (filtering, column pruning)
+          b) Second priority: Optimizations that improve access methods (join strategies, index usage)
+          c) Third priority: Structural improvements (query reorganization, redundancy removal)
+        - When in doubt about which optimization to choose, prefer the one that keeps the query closer to ANSI SQL standards
+        - Document your conflict resolution decisions with clear SQL comments
+
+     3) Optimization Integration Approach:
+        - Start with the most structurally sound version (typically the simplified query)
+        - Incorporate join optimizations while preserving the simplified structure
+        - Apply filtering optimizations ensuring they maintain compatibility with join strategies
+        - Integrate aggregation optimizations at the appropriate level
+        - Ensure the execution plan remains coherent after combining optimizations
+
+     4) Query Structure Preservation:
+        - Maintain the logical structure and readability of the query
+        - Preserve appropriate indentation and formatting
+        - Group related optimizations in the same query sections
+
+     5) Optimization Validation Checks:
+        - Ensure no column references were lost during reconciliation
+        - Verify all table aliases remain consistent across the query
+        - Confirm all filtering conditions are preserved or enhanced
+        - Check that join relationships maintain proper cardinality
+
+    Priority Optimization Categories:
+     1) Data Volume Reduction:
+        - Early filtering (predicate pushdown)
+        - Column pruning (SELECT specific columns instead of *)
+        - Sargable predicates (index-friendly conditions)
+
+     2) Join Efficiency:
+        - Broadcast hints for small tables
+        - Optimal join order (smaller tables first)
+        - Appropriate join types and algorithms
+
+     3) Aggregation Performance:
+        - Pre-aggregation strategies
+        - Filter before aggregate
+        - Efficient window function usage
+
+     4) Query Simplification:
+        - Redundancy elimination
+        - Subquery optimization
+        - Expression simplification
+
+    Important Notes:
+     - The final query MUST preserve the exact same functionality and results as the original
+     - Add clear SQL comments explaining major optimization decisions, especially when resolving conflicts
+     - If optimizations from different specialists seem incompatible, explain your reasoning for choosing one over the other
+     - Focus on producing a single, coherent, highly optimized query that could not have been achieved by any single specialist alone
+     - The final query should be the most performant version possible while maintaining full compatibility with ANSI SQL standards
+     - ONLY return the final optimized SQL query with well-structured comments explaining the incorporated optimizations
+
+     Output Format:
+     Please format the output in the following structure:
+     ### [QUERY]
+     <Only the executable SQL query here — no comments. Must be ready to run.>
+
+    ### [EXPLANATION]
+    <Explanation of all key optimizations and reasoning used in the final query.>
     """
