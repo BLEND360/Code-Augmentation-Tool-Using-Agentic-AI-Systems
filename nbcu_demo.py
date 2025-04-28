@@ -4,9 +4,10 @@ import streamlit as st
 import yaml
 import pandas as pd
 from typing import TypedDict, Annotated, Union
+from langgraph.graph import StateGraph
+from langgraph.graph import END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
-from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from utils import ConverterState
 from databricks import sql  
@@ -142,48 +143,59 @@ if st.session_state.interactive_chat_history:
             # Show intermediate results in an expander
             if "intermediate" in chat and chat["intermediate"]:
                 timestamp_key = chat.get("timestamp_key", str(time.time()))
-                with st.expander("View Intermediate Steps", expanded=False):
+                with st.expander("View All Results", expanded=False):
                     intermediate = chat["intermediate"]
-            
-                    if "AST" in intermediate and st.checkbox("AST Tree", key=f"ast_{timestamp_key}"):
+                    
+                    if "AST" in intermediate and st.checkbox("**1.** AST Tree", key=f"AST_{timestamp_key}"):
                         st.json(intermediate["AST"])
             
-                    if "translated_ansi_sql" in intermediate and st.checkbox("Translated ANSI SQL", key=f"translated_sql_{timestamp_key}"):
+                    if "translated_ansi_sql" in intermediate and st.checkbox("**2.** Translated ANSI SQL", key=f"translated_sql_{timestamp_key}"):
                         st.code(intermediate["translated_ansi_sql"], language="sql")
             
-                    if "join_agg_optimized_sql" in intermediate and st.checkbox("Joins & Aggregations Optimized ANSI SQL", key=f"join_agg_sql_{timestamp_key}"):
+                    if "join_agg_optimized_sql" in intermediate and st.checkbox("**3a.** Joins & Aggregations Optimized ANSI SQL", key=f"join_agg_sql_{timestamp_key}"):
                         st.code(intermediate["join_agg_optimized_sql"], language="sql")
             
-                    if "simplified_sql" in intermediate and st.checkbox("Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
+                    if "simplified_sql" in intermediate and st.checkbox("**3b.** Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
                         st.code(intermediate["simplified_sql"], language="sql")
             
-                    if "filtered_sql" in intermediate and st.checkbox("Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
+                    if "filtered_sql" in intermediate and st.checkbox("**3c.** Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
                         st.code(intermediate["filtered_sql"], language="sql")
             
-                    if "optimization_notes" in intermediate and st.checkbox("Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
+                    if "optimization_notes" in intermediate and st.checkbox("**4.** Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                         st.write(intermediate["optimization_notes"])
 
                     if "performance_metrics" in intermediate and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
-                        st.subheader("📊 Performance Metrics (Execution Time, Rows Processed)")
-                        # Check if performance_metrics exists and is not empty
+                        st.subheader("📊 Performance Metrics")
                         if intermediate["performance_metrics"]:
                             metrics_df = pd.DataFrame(intermediate["performance_metrics"])
-                            st.table(metrics_df)
-                        else:
-                            st.info("No performance metrics available.")
 
-                    if "validation_result" in intermediate and st.checkbox("Validation Against Both Databases", key=f"validation_result_{timestamp_key}"):
+                            if set(["Databricks (Original)", "Databricks (Optimized)"]).issubset(metrics_df.columns):
+                                metrics_df = metrics_df[["KPI", "Databricks (Original)", "Databricks (Optimized)"]]
+
+                                if "index" in metrics_df.columns:
+                                    metrics_df = metrics_df.drop(columns=["index"])
+
+                                # Move KPI to index
+                                metrics_df = metrics_df.set_index("KPI")
+
+                                # Round numbers
+                                metrics_df = metrics_df.round(2)
+
+                                # Format nicely
+                                styled_metrics_df = metrics_df.style.format("{:.2f}")
+
+                                # Display clean table
+                                st.table(styled_metrics_df)
+                            else:
+                                st.info("No performance metrics available.")
+                if "validation_result" in intermediate:
                         validation_result = intermediate["validation_result"]
                         if validation_result.get("validation_status") == "success":
-                            st.success("✅ Query output matched in both Snowflake and Databricks.")
+                            st.success("Validation Result: Query output matched in both Snowflake and Databricks.")
                         else:
-                            st.error("❌ Validation failed!")
+                            st.error("Validation Result: Validation failed!")
                             for issue in validation_result.get("failed_checks", []):
-                                st.markdown(f"- **{issue['check']}**: {issue['reason']}")
-                    
-
-
-                                    
+                                st.markdown(f"- **{issue['check']}**: {issue['reason']}")                                      
 
 # Chat input
 user_question = st.chat_input("Type your Snowflake SQL query...")
@@ -214,24 +226,40 @@ if user_question:
             st.error(ansi_result)  # Display error message
 
         if success and intermediate_results:
-            with st.expander("View Intermediate Steps"):
-                if "AST" in intermediate_results and st.checkbox("AST Tree", key=f"AST_{timestamp_key}"):
+            with st.expander("View all result"):
+                if "AST" in intermediate_results and st.checkbox("**1.** AST Tree", key=f"AST_{timestamp_key}"):
                     st.json(intermediate_results["AST"])
-                if "translated_ansi_sql" in intermediate_results and st.checkbox("Translated ANSI SQL", key=f"translated_ansi_sql_{timestamp_key}"):
+                if "translated_ansi_sql" in intermediate_results and st.checkbox("**2.** Translated ANSI SQL", key=f"translated_ansi_sql_{timestamp_key}"):
                     st.code(intermediate_results["translated_ansi_sql"], language="sql")
-                if "join_agg_optimized_sql" in intermediate_results and st.checkbox("Joins & Aggregations Optimized ANSI SQL",key=f"join_agg_optimized_sql_{timestamp_key}"):
+                if "join_agg_optimized_sql" in intermediate_results and st.checkbox("**3a.** Joins & Aggregations Optimized ANSI SQL",key=f"join_agg_optimized_sql_{timestamp_key}"):
                     st.code(intermediate_results["join_agg_optimized_sql"], language="sql")
-                if "simplified_sql" in intermediate_results and st.checkbox("Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
+                if "simplified_sql" in intermediate_results and st.checkbox("**3b.** Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
                     st.code(intermediate_results["simplified_sql"], language="sql")
-                if "filtered_sql" in intermediate_results and st.checkbox("Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
+                if "filtered_sql" in intermediate_results and st.checkbox("**3c.** Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
                     st.code(intermediate_results["filtered_sql"], language="sql")
-                if "optimization_notes" in intermediate_results and st.checkbox("Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
+                if "optimization_notes" in intermediate_results and st.checkbox("**4.** Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                     st.write(intermediate_results["optimization_notes"])
-                if "validation_result" in intermediate_results and st.checkbox("Validation Against Both Databases", key=f"validation_result_{timestamp_key}"):
-                    validation_engine_result = intermediate["validation_result"]
-                    if validation_engine_result.get("validation_status") == "success":
-                        st.success("✅ Query output matched in both Snowflake and Databricks.")
-                    else:
-                        st.error("❌ Validation failed!")
-                        for issue in validation_engine_result.get("failed_checks", []):
-                            st.markdown(f"- **{issue['check']}**: {issue['reason']}")
+                if "performance_metrics" in intermediate_results and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
+                        st.subheader("📊 Performance Metrics")
+                        if intermediate_results["performance_metrics"]:
+                            metrics_df = pd.DataFrame(intermediate_results["performance_metrics"])
+
+                            if set(["Databricks (Original)", "Databricks (Optimized)"]).issubset(metrics_df.columns):
+                                metrics_df = metrics_df[["KPI", "Databricks (Original)", "Databricks (Optimized)"]]
+
+                                if "index" in metrics_df.columns:
+                                    metrics_df = metrics_df.drop(columns=["index"])
+
+                                # Move KPI to index
+                                metrics_df = metrics_df.set_index("KPI")
+
+                                # Round numbers
+                                metrics_df = metrics_df.round(2)
+
+                                # Format nicely
+                                styled_metrics_df = metrics_df.style.format("{:.2f}")
+
+                                # Display clean table
+                                st.table(styled_metrics_df)
+                            else:
+                                st.info("No performance metrics available.")
