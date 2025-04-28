@@ -2,6 +2,7 @@ import json
 import os
 import streamlit as st
 import yaml
+import pandas as pd
 from typing import TypedDict, Annotated, Union
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
@@ -38,6 +39,9 @@ def convert_snowflake_to_ansi(sql_query: str):
 
     st.write("✅ About to run LangGraph pipeline")
     final_state = app.invoke(initial_state)
+
+    # 🔵 These are the important ones
+    original_query = sql_query
     optimized_sql = final_state.get("final_optimized_sql", "")
 
     if optimized_sql:
@@ -48,15 +52,18 @@ def convert_snowflake_to_ansi(sql_query: str):
     
         with st.spinner("🔍 Running validation across Snowflake and Databricks..."):
             validation_result = validate_query_across_engines(
-                optimized_sql,
-                conn_sf,
-                conn_db,
+                original_query=sql_query,
+                optimized_query=optimized_sql,
+                conn_sf=conn_sf,
+                conn_db=conn_db,
                 db_name=config["databricks"].get("database", "nbcu_demo")
             )
-        intermediate_results["validation_result"] = validation_result
+    intermediate_results["validation_result"] = validation_result
+    intermediate_results["performance_metrics"] = validation_result.get("performance_metrics", [])
 
-        conn_sf.close()
-        conn_db.close()
+    conn_sf.close()
+    conn_db.close()
+
 
     # Always store AST and other intermediate outputs
     intermediate_results["AST"] = final_state.get("ast", {})
@@ -64,9 +71,10 @@ def convert_snowflake_to_ansi(sql_query: str):
     intermediate_results["join_agg_optimized_sql"] = final_state.get("join_agg_optimized_sql", "")
     intermediate_results["simplified_sql"] = final_state.get("simplified_sql", "")
     intermediate_results["filtered_sql"] = final_state.get("filtered_sql", "")
-    intermediate_results["optimization_notes"]=final_state.get("optimization_notes","")
+    intermediate_results["optimization_notes"] = final_state.get("optimization_notes", "")
 
     return optimized_sql, intermediate_results
+
 
 
 # 🧠 Define LangGraph workflow
@@ -129,32 +137,53 @@ if st.session_state.interactive_chat_history:
             else:
                 st.code(chat["answer"], language="sql")  # Display the main result
 
+            
+
             # Show intermediate results in an expander
             if "intermediate" in chat and chat["intermediate"]:
                 timestamp_key = chat.get("timestamp_key", str(time.time()))
-                with st.expander("View Intermediate Steps", expanded=False):  # Default not expanded
+                with st.expander("View Intermediate Steps", expanded=False):
                     intermediate = chat["intermediate"]
-                    
-                    if "AST" in intermediate and st.checkbox("AST Tree", key=f"AST_{timestamp_key}"):
+            
+                    if "AST" in intermediate and st.checkbox("AST Tree", key=f"ast_{timestamp_key}"):
                         st.json(intermediate["AST"])
-                    if "translated_ansi_sql" in intermediate and st.checkbox("Translated ANSI SQL", key=f"translated_ansi_sql_{timestamp_key}"):
+            
+                    if "translated_ansi_sql" in intermediate and st.checkbox("Translated ANSI SQL", key=f"translated_sql_{timestamp_key}"):
                         st.code(intermediate["translated_ansi_sql"], language="sql")
-                    if "join_agg_optimized_sql" in intermediate and st.checkbox("Joins & Aggregations Optimized ANSI SQL", key=f"join_agg_optimized_sql_{timestamp_key}"):
+            
+                    if "join_agg_optimized_sql" in intermediate and st.checkbox("Joins & Aggregations Optimized ANSI SQL", key=f"join_agg_sql_{timestamp_key}"):
                         st.code(intermediate["join_agg_optimized_sql"], language="sql")
+            
                     if "simplified_sql" in intermediate and st.checkbox("Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
                         st.code(intermediate["simplified_sql"], language="sql")
+            
                     if "filtered_sql" in intermediate and st.checkbox("Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
                         st.code(intermediate["filtered_sql"], language="sql")
+            
                     if "optimization_notes" in intermediate and st.checkbox("Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                         st.write(intermediate["optimization_notes"])
-                    if "validation_result" in intermediate and st.checkbox("Validation Against Both Databases", key=f"optimization_notes_{timestamp_key}"):
-                        validation_engine_result = intermediate["validation_result"]
-                        if validation_engine_result.get("validation_status") == "success":
+
+                    if "performance_metrics" in intermediate and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
+                        st.subheader("📊 Performance Metrics (Execution Time, Rows Processed)")
+                        # Check if performance_metrics exists and is not empty
+                        if intermediate["performance_metrics"]:
+                            metrics_df = pd.DataFrame(intermediate["performance_metrics"])
+                            st.table(metrics_df)
+                        else:
+                            st.info("No performance metrics available.")
+
+                    if "validation_result" in intermediate and st.checkbox("Validation Against Both Databases", key=f"validation_result_{timestamp_key}"):
+                        validation_result = intermediate["validation_result"]
+                        if validation_result.get("validation_status") == "success":
                             st.success("✅ Query output matched in both Snowflake and Databricks.")
                         else:
                             st.error("❌ Validation failed!")
-                            for issue in validation_engine_result.get("failed_checks", []):
+                            for issue in validation_result.get("failed_checks", []):
                                 st.markdown(f"- **{issue['check']}**: {issue['reason']}")
+                    
+
+
+                                    
 
 # Chat input
 user_question = st.chat_input("Type your Snowflake SQL query...")
@@ -198,7 +227,7 @@ if user_question:
                     st.code(intermediate_results["filtered_sql"], language="sql")
                 if "optimization_notes" in intermediate_results and st.checkbox("Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                     st.write(intermediate_results["optimization_notes"])
-                if "validation_result" in intermediate_results and st.checkbox("Validation Against Both Databases", key=f"optimization_notes_{timestamp_key}"):
+                if "validation_result" in intermediate_results and st.checkbox("Validation Against Both Databases", key=f"validation_result_{timestamp_key}"):
                     validation_engine_result = intermediate["validation_result"]
                     if validation_engine_result.get("validation_status") == "success":
                         st.success("✅ Query output matched in both Snowflake and Databricks.")

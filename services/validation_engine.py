@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 import numpy as np
+import time
 from databricks import sql
 import snowflake.connector
 
@@ -11,6 +12,19 @@ def run_query(conn, query_string):
     columns = [desc[0].lower().strip() for desc in cur.description]
     return pd.DataFrame(result, columns=columns)
 
+def run_query_with_timer(conn, query_string):
+    """ Run a query and measure execution time and rows processed. """
+    cur = conn.cursor()
+    start_time = time.time()
+    cur.execute(query_string)
+    result = cur.fetchall()
+    end_time = time.time()
+    columns = [desc[0].lower().strip() for desc in cur.description]
+    df = pd.DataFrame(result, columns=columns)
+    return df, {
+        "execution_time_ms": round((end_time - start_time) * 1000, 2),
+        "rows_processed": len(df)
+    }
 
 def detect_sql_clauses(query):
     query_upper = query.upper()
@@ -38,7 +52,6 @@ def get_rounded_columns(query: str) -> dict:
     )
     detected = {alias.lower(): int(precision) for precision, alias in round_matches}
 
-    # 🔹 Add default rounding for known aggregates if ROUND not used explicitly
     aggregate_matches = re.findall(
         r'(SUM|AVG|TOTAL|MEDIAN)\s*\(.*?\)\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*)',
         query,
@@ -47,7 +60,7 @@ def get_rounded_columns(query: str) -> dict:
     for func, alias in aggregate_matches:
         alias_lower = alias.lower()
         if alias_lower not in detected:
-            detected[alias_lower] = 2  # Default precision fallback
+            detected[alias_lower] = 2  # Default rounding to 2 decimals
 
     return detected
 
@@ -90,10 +103,9 @@ def compare_with_tolerance(df1, df2, rounded_columns: dict):
 
                 if not str1.equals(str2):
                     print(f"[X] Mismatch in numeric column '{col}':")
-                    print("Row | Snowflake | Databricks")
                     for i in range(len(str1)):
                         if str1[i] != str2[i]:
-                            print(f"{i:>3} | {str1[i]:>10} | {str2[i]:<10}")
+                            print(f"{i:>3} | {str1[i]} | {str2[i]}")
                     return False
 
             except Exception:
@@ -113,6 +125,11 @@ def compare_with_tolerance(df1, df2, rounded_columns: dict):
     return True
 
 def qualify_tables(query: str, db_name: str):
+    """
+    Fully qualify tables in FROM and JOIN clauses with the database name.
+    Handles simple cases with optional aliases.
+    """
+    # Detect CTEs so we don't qualify them
     cte_pattern = r"WITH\s+(.+?)\s+AS\s*\("
     cte_matches = re.findall(cte_pattern, query, flags=re.IGNORECASE | re.DOTALL)
     cte_names = set()
@@ -124,30 +141,65 @@ def qualify_tables(query: str, db_name: str):
                 if name:
                     cte_names.add(name.lower())
 
-    table_pattern = r"\b(FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)(?!\s*\.)"
+    # This pattern captures FROM or JOIN followed by table name, optional alias
+    table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*)(\s+[a-zA-Z_][\w]*)?'
 
     def replacer(match):
-        keyword, table = match.groups()
+        keyword = match.group(1)
+        table = match.group(2)
+        alias = match.group(3) or ''
+
+        # Skip CTEs
         if table.lower() in cte_names:
             return match.group(0)
-        return f"{keyword} {db_name}.{table.lower()}"
+
+        # If table already has a dot (.), assume already qualified
+        if '.' in table:
+            return match.group(0)
+
+        return f"{keyword} {db_name}.{table.lower()}{alias}"
 
     return re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
 
-def validate_query_across_engines(query_string: str, conn_sf, conn_db, db_name: str = "nbcu_demo") -> dict:
+
+
+def strip_sql_hints(query: str) -> str:
+    """
+    Remove SQL hints that are incompatible between different SQL engines
+    Handles Snowflake-style hints like /*+ BROADCAST */ and similar
+    """
+    # Remove /*+ ... */ style hints
+    hint_pattern = r'/\*\+.*?\*/'
+    return re.sub(hint_pattern, '', query, flags=re.DOTALL)
+
+def validate_query_across_engines(original_query: str, optimized_query: str, conn_sf, conn_db, db_name: str = "nbcu_demo") -> dict:
     try:
         print("Starting validation...")
-        query_db = qualify_tables(query_string, db_name)
 
-        df_sf = run_query(conn_sf, query_string)
-        df_db = run_query(conn_db, query_db)
+        # 🔵 Prepare fully qualified queries
+        query_db_orig = qualify_tables(original_query, db_name)
+        query_db_opt = qualify_tables(optimized_query, db_name)
+        
+        # 🔵 Strip SQL hints for Databricks
+        query_db_orig = strip_sql_hints(query_db_orig)
+        query_db_opt = strip_sql_hints(query_db_opt)
 
-        clauses = detect_sql_clauses(query_string)
-        rounded_columns = get_rounded_columns(query_string)
+        # 🔵 Metrics + Results (Original)
+        _, metrics_sf_orig = run_query_with_timer(conn_sf, original_query)
+        _, metrics_db_orig = run_query_with_timer(conn_db, query_db_orig)
+
+        # 🔵 Metrics + Results (Optimized)
+        df_sf_opt, metrics_sf_opt = run_query_with_timer(conn_sf, optimized_query)
+        df_db_opt, metrics_db_opt = run_query_with_timer(conn_db, query_db_opt)
+
+
+        # 🔵 Normalize for Validation
+        clauses = detect_sql_clauses(optimized_query)
+        rounded_columns = get_rounded_columns(optimized_query)
         strict_order = clauses.get("has_order_by", False)
 
-        df_sf_norm = normalize_dataframe(df_sf)
-        df_db_norm = normalize_dataframe(df_db)
+        df_sf_norm = normalize_dataframe(df_sf_opt)
+        df_db_norm = normalize_dataframe(df_db_opt)
 
         if strict_order:
             print("[Validation] ORDER BY detected — comparing row-by-row.")
@@ -158,12 +210,22 @@ def validate_query_across_engines(query_string: str, conn_sf, conn_db, db_name: 
             df_db_sorted = df_db_norm.sort_values(by=list(df_db_norm.columns)).reset_index(drop=True)
             match = compare_with_tolerance(df_sf_sorted, df_db_sorted, rounded_columns)
 
+        # 🔵 Prepare Metrics Table
+        kpi_table = pd.DataFrame({
+            "KPI": ["Execution Time (ms)", "Rows Processed"],
+            "Snowflake (Original)": [metrics_sf_orig["execution_time_ms"], metrics_sf_orig["rows_processed"]],
+            "Snowflake (Optimized)": [metrics_sf_opt["execution_time_ms"], metrics_sf_opt["rows_processed"]],
+            "Databricks (Original)": [metrics_db_orig["execution_time_ms"], metrics_db_orig["rows_processed"]],
+            "Databricks (Optimized)": [metrics_db_opt["execution_time_ms"], metrics_db_opt["rows_processed"]],
+        })
+
         return {
             "validation_status": "success" if match else "fail",
             "failed_checks": [] if match else [{
                 "check": "data_match",
                 "reason": "Row values differ (check row order or precision)"
-            }]
+            }],
+            "performance_metrics": kpi_table.to_dict(orient="records")  # ready for Streamlit
         }
 
     except Exception as e:

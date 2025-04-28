@@ -1,14 +1,14 @@
 snowflake:
   account: "WB19670-C2GPARTNERS"
-  user: "xxx@xxx.COM"
+  user: "XXX.XXXXX@BLEND360.COM"
   authenticator: "externalbrowser"
   database: "SANDBOX"
   schema: "DS"
 
 databricks:
-  server_hostname: "xx-xxxx.cloud.databricks.com"
-  http_path: "/sql/1.0/warehouses/xxxxx"
-  access_token: "xxxxx"
+  server_hostname: "dbc-ff1901e9-f7d0.cloud.databricks.com"
+  http_path: "/sql/1.0/warehouses/0f76c12366c1c229"
+  access_token: "XXXXXX"
   database: "nbcu_demo"
 
 validation:
