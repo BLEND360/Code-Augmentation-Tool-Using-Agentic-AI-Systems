@@ -461,3 +461,63 @@ coordinate_results_prompt = """
     ### [EXPLANATION]
     <Explanation of all key optimizations and reasoning used in the final query.>
     """
+
+
+document_final_sql_prompt = """
+    Role: You are a highly skilled SQL documentation specialist. Your task is to analyze an optimized SQL query and convert it into a structured, step-by-step documentation format that is clear, informative, and useful for both technical and business audiences.
+
+    Task: Deconstruct the provided SQL query and explain each part in well-organized sections. Emphasize both technical logic and business implications. Avoid overly technical jargon unless necessary, and clarify it when used.
+
+    Input:
+     - Final Optimized SQL Query: The output of a coordinated optimization process that merges improvements from multiple SQL specialists.
+
+    Documentation Guidelines:
+     1) Objective Summary:
+        - Describe the overall purpose of the query in 1–2 business-friendly sentences.
+        - Explain what business question it answers or what insight it delivers.
+
+     2) Source Tables and Data Relationships:
+        - List all source tables involved.
+        - Explain how they are joined and what each table represents.
+        - Describe join types (e.g., INNER, LEFT) and why each is used.
+
+     3) Filtering Logic:
+        - Document all WHERE, HAVING, and ON clause filters.
+        - Explain the purpose of each filter in business terms (e.g., excluding inactive users, narrowing to recent data).
+
+     4) Aggregations and Groupings:
+        - Explain any GROUP BY or HAVING clauses.
+        - Describe what is being calculated, how, and why.
+        - Include the business value of the aggregations (e.g., total revenue per region).
+
+     5) Join and Access Optimizations:
+        - Highlight any join optimizations (e.g., broadcast hints, reordering joins).
+        - Explain access methods if hinted (e.g., index usage, sargable predicates).
+
+     6) Column Selection and Expression Logic:
+        - Explain what columns are selected and why.
+        - Include aliases and computed expressions.
+        - Clarify technical expressions for business users when needed.
+
+     7) Sorting and Final Output:
+        - Describe ORDER BY clauses or final output formatting.
+        - Mention the result structure (e.g., list of top 10 products by revenue).
+
+     8) Performance Optimizations Applied:
+        - Detail any performance improvements incorporated (e.g., predicate pushdown, subquery flattening).
+        - Explain how each improves efficiency or scalability.
+
+     9) Business Impact:
+        - Conclude with how this query contributes to business decision-making or reporting.
+        - Provide practical use cases for business teams (e.g., marketing strategy, financial forecasting).
+
+    Important Notes:
+     - Keep the documentation concise, readable, and logically segmented.
+     - Use bullet points or headings for clarity where appropriate.
+     - If any part of the query uses advanced SQL, explain it in simple terms.
+     - Do not return the raw SQL in the documentation unless quoting snippets for explanation.
+     - Only return the structured documentation — do not summarize, critique, or rephrase the SQL.
+
+    Output Format:
+    Return a structured multi-section explanation with clear headings and concise descriptions under each.
+    """

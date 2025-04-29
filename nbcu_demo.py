@@ -14,7 +14,7 @@ from databricks import sql
 import snowflake.connector
 from services.validation_engine import validate_query_across_engines
 from services.db_connectors import connect_to_snowflake, connect_to_databricks
-from services.query_processor import parse_sql_to_ast, translate_ast_to_ansi, validate_ansi_sql, optimize_joins_aggregations, optimize_simplify_query, optimize_data_filtering, coordinate_results
+from services.query_processor import parse_sql_to_ast, translate_ast_to_ansi, validate_ansi_sql, optimize_joins_aggregations, optimize_simplify_query, optimize_data_filtering, coordinate_results, document_final_sql
 import time
 
 # 🔹 Load YAML config
@@ -35,13 +35,14 @@ def convert_snowflake_to_ansi(sql_query: str):
         filtered_sql="",
         final_optimized_sql="",
         optimization_notes="",
+        final_sql_documentation="",
         messages=[] 
     )
 
     st.write("✅ About to run LangGraph pipeline")
     final_state = app.invoke(initial_state)
-
-    # 🔵 These are the important ones
+    print('Final state:', final_state)
+    
     original_query = sql_query
     optimized_sql = final_state.get("final_optimized_sql", "")
 
@@ -73,6 +74,9 @@ def convert_snowflake_to_ansi(sql_query: str):
     intermediate_results["simplified_sql"] = final_state.get("simplified_sql", "")
     intermediate_results["filtered_sql"] = final_state.get("filtered_sql", "")
     intermediate_results["optimization_notes"] = final_state.get("optimization_notes", "")
+    intermediate_results["final_sql_documentation"] = final_state.get("final_sql_documentation", "")
+
+    print('Final sql documentation:', final_state.get("final_sql_documentation", ""))
 
     return optimized_sql, intermediate_results
 
@@ -87,6 +91,7 @@ workflow.add_node("JoinAggregationOptimizerAgent", optimize_joins_aggregations)
 workflow.add_node("QuerySimplificationAgent", optimize_simplify_query)
 workflow.add_node("DataFilteringAgent", optimize_data_filtering)
 workflow.add_node("CoordinatorAgent", coordinate_results)
+workflow.add_node("DocumentationAgent", document_final_sql)
 
 workflow.set_entry_point("ParserAgent")
 
@@ -102,7 +107,8 @@ workflow.add_edge("QuerySimplificationAgent", "CoordinatorAgent")
 workflow.add_edge("DataFilteringAgent", "CoordinatorAgent")
 
 # Final output
-workflow.add_edge("CoordinatorAgent", END)
+workflow.add_edge("CoordinatorAgent", "DocumentationAgent")
+workflow.add_edge("DocumentationAgent", END)
 
 app = workflow.compile()
 
@@ -164,7 +170,10 @@ if st.session_state.interactive_chat_history:
                     if "optimization_notes" in intermediate and st.checkbox("**4.** Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                         st.write(intermediate["optimization_notes"])
 
-                    if "performance_metrics" in intermediate and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
+                    if "final_sql_documentation" in intermediate and st.checkbox("**5.** Final SQL Query Documentation", key=f"final_sql_documentation_{timestamp_key}"):
+                        st.write(intermediate["final_sql_documentation"])
+
+                    if "performance_metrics" in intermediate:# and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
                         st.subheader("📊 Performance Metrics")
                         if intermediate["performance_metrics"]:
                             metrics_df = pd.DataFrame(intermediate["performance_metrics"])
@@ -188,6 +197,7 @@ if st.session_state.interactive_chat_history:
                                 st.table(styled_metrics_df)
                             else:
                                 st.info("No performance metrics available.")
+                                
                 if "validation_result" in intermediate:
                         validation_result = intermediate["validation_result"]
                         if validation_result.get("validation_status") == "success":
@@ -239,7 +249,9 @@ if user_question:
                     st.code(intermediate_results["filtered_sql"], language="sql")
                 if "optimization_notes" in intermediate_results and st.checkbox("**4.** Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                     st.write(intermediate_results["optimization_notes"])
-                if "performance_metrics" in intermediate_results and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
+                if "final_sql_documentation" in intermediate_results and st.checkbox("**5.** Final SQL Query Documentation", key=f"final_sql_documentation_{timestamp_key}"):
+                        st.write(intermediate_results["final_sql_documentation"])
+                if "performance_metrics" in intermediate_results:# and st.checkbox("Performance Metrics Comparison", key=f"performance_metrics_box_{timestamp_key}"):
                         st.subheader("📊 Performance Metrics")
                         if intermediate_results["performance_metrics"]:
                             metrics_df = pd.DataFrame(intermediate_results["performance_metrics"])
@@ -263,3 +275,12 @@ if user_question:
                                 st.table(styled_metrics_df)
                             else:
                                 st.info("No performance metrics available.")
+
+            if "validation_result" in intermediate_results:
+                        validation_result = intermediate_results["validation_result"]
+                        if validation_result.get("validation_status") == "success":
+                            st.success("Validation Result: Query output matched in both Snowflake and Databricks.")
+                        else:
+                            st.error("Validation Result: Validation failed!")
+                            for issue in validation_result.get("failed_checks", []):
+                                st.markdown(f"- **{issue['check']}**: {issue['reason']}")

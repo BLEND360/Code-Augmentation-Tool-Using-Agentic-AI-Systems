@@ -3,7 +3,7 @@ import json
 import streamlit as st
 from langchain_openai import ChatOpenAI
 from utils import ConverterState, parse_final_optimised_query
-from .query_processor_prompts import parse_sql_to_ast_prompt, translate_ast_to_ansi_prompt, validate_ansi_sql_prompt, optimize_joins_aggregations_prompt, optimize_simplify_query_prompt, optimize_data_filtering_prompt, coordinate_results_prompt
+from .query_processor_prompts import parse_sql_to_ast_prompt, translate_ast_to_ansi_prompt, validate_ansi_sql_prompt, optimize_joins_aggregations_prompt, optimize_simplify_query_prompt, optimize_data_filtering_prompt, coordinate_results_prompt, document_final_sql_prompt
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
@@ -225,3 +225,61 @@ def coordinate_results(state: ConverterState) -> dict:
             "final_optimized_sql": final_query,
             "optimization_notes": notes
         }
+
+def document_final_sql(state: ConverterState) -> dict:
+    """
+    Analyzes and documents the final optimized SQL query in a clear, step-by-step, and structured format.
+    The output is tailored to be understandable and actionable by both business and technical audiences.
+
+    Args:
+        final_optimized_sql (str): The final, reconciled, and optimized SQL query.
+
+    Returns:
+        dict: A dictionary containing a comprehensive breakdown and documentation of the SQL query.
+    """
+    with st.spinner("Documenting..."):
+        final_optimized_sql = state.get("final_optimized_sql")
+        print('In documentation:', final_optimized_sql)
+        user_message = (
+            "Please analyze the following final optimized SQL query and convert it into well-organized, step-by-step documentation suitable for both technical and business stakeholders:\n\n"
+            f"Final Optimized SQL Query:\n{final_optimized_sql}\n\n"
+            "Your output should be structured according to the documentation guidelines above."
+        )
+    
+        response = llm.invoke(
+            [
+                {"role": "system", "content": document_final_sql_prompt},
+                {"role": "user", "content": user_message},
+            ]
+        )
+        documentation = response.content.strip()
+        print('SQL Documentation:', documentation)
+        
+    return {
+        "final_sql_documentation": documentation
+    }
+
+# def document_final_sql(state: dict) -> dict:
+#     with st.spinner("Documenting..."):
+#         final_optimized_sql = state.get("final_optimized_sql", "")
+#         if not final_optimized_sql:
+#             state["final_sql_documentation"] = "No final SQL available to document."
+#             return state
+    
+#         user_message = (
+#             "Please analyze the following final optimized SQL query and convert it into well-organized, "
+#             "step-by-step documentation suitable for both technical and business stakeholders:\n\n"
+#             f"Final Optimized SQL Query:\n{final_optimized_sql}\n\n"
+#             "Your output should be structured according to the documentation guidelines above."
+#         )
+    
+#         response = llm.invoke(
+#             [
+#                 {"role": "system", "content": document_final_sql_prompt},
+#                 {"role": "user", "content": user_message},
+#             ]
+#         )
+    
+#         documentation = response.content.strip()
+#         state["final_sql_documentation"] = documentation
+#     return state  # Return full state here

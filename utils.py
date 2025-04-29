@@ -10,6 +10,7 @@ class ConverterState(TypedDict):
     filtered_sql: Annotated[str, None]
     final_optimized_sql: Annotated[str, None]
     optimization_notes: Annotated[str, None]
+    final_sql_documentation: Annotated[str, None]
     messages: NotRequired[List[str]]
 
 def parse_final_optimised_query(raw_output):
