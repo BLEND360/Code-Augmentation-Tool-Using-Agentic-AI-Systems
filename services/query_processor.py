@@ -258,28 +258,3 @@ def document_final_sql(state: ConverterState) -> dict:
     return {
         "final_sql_documentation": documentation
     }
-
-# def document_final_sql(state: dict) -> dict:
-#     with st.spinner("Documenting..."):
-#         final_optimized_sql = state.get("final_optimized_sql", "")
-#         if not final_optimized_sql:
-#             state["final_sql_documentation"] = "No final SQL available to document."
-#             return state
-    
-#         user_message = (
-#             "Please analyze the following final optimized SQL query and convert it into well-organized, "
-#             "step-by-step documentation suitable for both technical and business stakeholders:\n\n"
-#             f"Final Optimized SQL Query:\n{final_optimized_sql}\n\n"
-#             "Your output should be structured according to the documentation guidelines above."
-#         )
-    
-#         response = llm.invoke(
-#             [
-#                 {"role": "system", "content": document_final_sql_prompt},
-#                 {"role": "user", "content": user_message},
-#             ]
-#         )
-    
-#         documentation = response.content.strip()
-#         state["final_sql_documentation"] = documentation
-#     return state  # Return full state here

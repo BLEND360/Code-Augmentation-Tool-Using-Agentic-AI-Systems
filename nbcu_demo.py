@@ -22,26 +22,27 @@ with open("services/config_file.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 def convert_snowflake_to_ansi(sql_query: str):
-    st.write("✅ Entered convert_snowflake_to_ansi")
+    with st.spinner("Converting source to destination platform code"):
 
-    intermediate_results = {}
+        intermediate_results = {}
+    
+        initial_state = ConverterState(
+            input_query=sql_query,
+            ast=None,
+            translated_sql="",
+            join_agg_optimized_sql="",
+            simplified_sql="",
+            filtered_sql="",
+            final_optimized_sql="",
+            optimization_notes="",
+            final_sql_documentation="",
+            messages=[] 
+        )
 
-    initial_state = ConverterState(
-        input_query=sql_query,
-        ast=None,
-        translated_sql="",
-        join_agg_optimized_sql="",
-        simplified_sql="",
-        filtered_sql="",
-        final_optimized_sql="",
-        optimization_notes="",
-        final_sql_documentation="",
-        messages=[] 
-    )
+    time.sleep(0.5)
 
-    st.write("✅ About to run LangGraph pipeline")
-    final_state = app.invoke(initial_state)
-    print('Final state:', final_state)
+    with st.spinner("Initiating code optimization agentic AI system"):
+        final_state = app.invoke(initial_state)
     
     original_query = sql_query
     optimized_sql = final_state.get("final_optimized_sql", "")
@@ -75,8 +76,6 @@ def convert_snowflake_to_ansi(sql_query: str):
     intermediate_results["filtered_sql"] = final_state.get("filtered_sql", "")
     intermediate_results["optimization_notes"] = final_state.get("optimization_notes", "")
     intermediate_results["final_sql_documentation"] = final_state.get("final_sql_documentation", "")
-
-    print('Final sql documentation:', final_state.get("final_sql_documentation", ""))
 
     return optimized_sql, intermediate_results
 
@@ -152,19 +151,19 @@ if st.session_state.interactive_chat_history:
                 with st.expander("View All Results", expanded=False):
                     intermediate = chat["intermediate"]
                     
-                    if "AST" in intermediate and st.checkbox("**1.** AST Tree", key=f"AST_{timestamp_key}"):
+                    if "AST" in intermediate and st.checkbox("**1.** Intermediary Code Logic Tree", key=f"AST_{timestamp_key}"):
                         st.json(intermediate["AST"])
             
-                    if "translated_ansi_sql" in intermediate and st.checkbox("**2.** Translated ANSI SQL", key=f"translated_sql_{timestamp_key}"):
+                    if "translated_ansi_sql" in intermediate and st.checkbox("**2.** Translated destination platform code (ANSI SQL)", key=f"translated_sql_{timestamp_key}"):
                         st.code(intermediate["translated_ansi_sql"], language="sql")
             
-                    if "join_agg_optimized_sql" in intermediate and st.checkbox("**3a.** Joins & Aggregations Optimized ANSI SQL", key=f"join_agg_sql_{timestamp_key}"):
+                    if "join_agg_optimized_sql" in intermediate and st.checkbox("**3a.** Join SQL Code Optimization AI Agent Output", key=f"join_agg_sql_{timestamp_key}"):
                         st.code(intermediate["join_agg_optimized_sql"], language="sql")
             
-                    if "simplified_sql" in intermediate and st.checkbox("**3b.** Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
+                    if "simplified_sql" in intermediate and st.checkbox("**3b.** Simplification AI Agent Output", key=f"simplified_sql_{timestamp_key}"):
                         st.code(intermediate["simplified_sql"], language="sql")
             
-                    if "filtered_sql" in intermediate and st.checkbox("**3c.** Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
+                    if "filtered_sql" in intermediate and st.checkbox("**3c.** Efficient Filtering AI Agent Output", key=f"filtered_sql_{timestamp_key}"):
                         st.code(intermediate["filtered_sql"], language="sql")
             
                     if "optimization_notes" in intermediate and st.checkbox("**4.** Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
@@ -201,7 +200,7 @@ if st.session_state.interactive_chat_history:
                 if "validation_result" in intermediate:
                         validation_result = intermediate["validation_result"]
                         if validation_result.get("validation_status") == "success":
-                            st.success("Validation Result: Query output matched in both Snowflake and Databricks.")
+                            st.success("Final Validation Verdict: Code outputs match in both source platform (Snowflake) and destination platform (Databricks)")
                         else:
                             st.error("Validation Result: Validation failed!")
                             for issue in validation_result.get("failed_checks", []):
@@ -237,15 +236,15 @@ if user_question:
 
         if success and intermediate_results:
             with st.expander("View all result"):
-                if "AST" in intermediate_results and st.checkbox("**1.** AST Tree", key=f"AST_{timestamp_key}"):
+                if "AST" in intermediate_results and st.checkbox("**1.** Intermediary Code Logic Tree", key=f"AST_{timestamp_key}"):
                     st.json(intermediate_results["AST"])
-                if "translated_ansi_sql" in intermediate_results and st.checkbox("**2.** Translated ANSI SQL", key=f"translated_ansi_sql_{timestamp_key}"):
+                if "translated_ansi_sql" in intermediate_results and st.checkbox("**2.** Translated destination platform code (ANSI SQL)", key=f"translated_ansi_sql_{timestamp_key}"):
                     st.code(intermediate_results["translated_ansi_sql"], language="sql")
-                if "join_agg_optimized_sql" in intermediate_results and st.checkbox("**3a.** Joins & Aggregations Optimized ANSI SQL",key=f"join_agg_optimized_sql_{timestamp_key}"):
+                if "join_agg_optimized_sql" in intermediate_results and st.checkbox("**3a.** Join SQL Code Optimization AI Agent Output",key=f"join_agg_optimized_sql_{timestamp_key}"):
                     st.code(intermediate_results["join_agg_optimized_sql"], language="sql")
-                if "simplified_sql" in intermediate_results and st.checkbox("**3b.** Simplified ANSI SQL", key=f"simplified_sql_{timestamp_key}"):
+                if "simplified_sql" in intermediate_results and st.checkbox("**3b.** Simplification AI Agent Output", key=f"simplified_sql_{timestamp_key}"):
                     st.code(intermediate_results["simplified_sql"], language="sql")
-                if "filtered_sql" in intermediate_results and st.checkbox("**3c.** Filtered ANSI SQL", key=f"filtered_sql_{timestamp_key}"):
+                if "filtered_sql" in intermediate_results and st.checkbox("**3c.** Efficient Filtering AI Agent Output", key=f"filtered_sql_{timestamp_key}"):
                     st.code(intermediate_results["filtered_sql"], language="sql")
                 if "optimization_notes" in intermediate_results and st.checkbox("**4.** Final Optimized ANSI SQL Explanation", key=f"optimization_notes_{timestamp_key}"):
                     st.write(intermediate_results["optimization_notes"])
@@ -279,7 +278,7 @@ if user_question:
             if "validation_result" in intermediate_results:
                         validation_result = intermediate_results["validation_result"]
                         if validation_result.get("validation_status") == "success":
-                            st.success("Validation Result: Query output matched in both Snowflake and Databricks.")
+                            st.success("Final Validation Verdict: Code outputs match in both source platform (Snowflake) and destination platform (Databricks)")
                         else:
                             st.error("Validation Result: Validation failed!")
                             for issue in validation_result.get("failed_checks", []):
