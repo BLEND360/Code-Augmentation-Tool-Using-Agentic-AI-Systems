@@ -253,6 +253,41 @@ def warm_up_databricks_connection(conn, db_name):
     except Exception as e:
         print(f"Warning: Failed to warm up connection: {e}")
 
+def build_validation_summary(
+    df_sf_norm,
+    df_db_norm,
+    sf_orig_success,
+    db_orig_success,
+    db_opt_success,
+    shape_match,
+    column_match,
+    row_count_match,
+    data_match
+):
+    """
+    Build a DataFrame summarizing all validation checks and their pass/fail status.
+    """
+    checks = []
+
+    def add_check(name, status, reason=""):
+        checks.append({
+            "Check": name,
+            "Status": "Pass" if status else "Fail",
+            "Reason": reason
+        })
+
+    add_check("Execution Success (Snowflake Original)", sf_orig_success, "" if sf_orig_success else "Query failed on Snowflake (Original)")
+    add_check("Execution Success (Databricks Original)", db_orig_success, "" if db_orig_success else "Query failed on Databricks (Original)")
+    add_check("Execution Success (Databricks Optimized)", db_opt_success, "" if db_opt_success else "Query failed on Databricks (Optimized)")
+
+    add_check("Column Names Match", column_match, "" if column_match else "Column names differ")
+    add_check("Shape Match", shape_match, "" if shape_match else f"Shape mismatch: Snowflake {df_sf_norm.shape}, Databricks {df_db_norm.shape}")
+    add_check("Row Count Match", row_count_match, "" if row_count_match else f"Row counts differ: Snowflake {len(df_sf_norm)}, Databricks {len(df_db_norm)}")
+    add_check("Data Match (With Tolerance)", data_match, "" if data_match else "Row-level data mismatch (precision or order)")
+
+    validation_df = pd.DataFrame(checks)
+    return validation_df
+
 def validate_query_across_engines(original_query: str, optimized_query: str, conn_sf, conn_db, db_name: str = "nbcu_demo") -> dict:
     try:
         print("Starting validation...")
@@ -303,14 +338,14 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
             }
 
         # 🔵 Metrics + Results (Optimized)
-        df_sf_opt, metrics_sf_opt = run_query_with_timer(conn_sf, optimized_query)
+        # df_sf_opt, metrics_sf_opt = run_query_with_timer(conn_sf, optimized_query)
         
         # Check for errors in optimized Snowflake query
-        if "error" in metrics_sf_opt:
-            return {
-                "validation_status": "error",
-                "failed_checks": [{"check": "execution", "reason": f"Snowflake optimized query error: {metrics_sf_opt['error']}"}]
-            }
+        # if "error" in metrics_sf_opt:
+        #     return {
+        #         "validation_status": "error",
+        #         "failed_checks": [{"check": "execution", "reason": f"Snowflake optimized query error: {metrics_sf_opt['error']}"}]
+        #     }
         
         # Use retry logic for optimized Databricks query
         df_db_opt, metrics_db_opt = run_query_with_timer(conn_db, db_opt_query)
@@ -350,7 +385,7 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
         rounded_columns = get_rounded_columns(optimized_query)
         strict_order = clauses.get("has_order_by", False)
 
-        df_sf_norm = normalize_dataframe(df_sf_opt)
+        df_sf_norm = normalize_dataframe(df_sf_orig)
         df_db_norm = normalize_dataframe(df_db_opt)
 
         if strict_order:
@@ -370,7 +405,7 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
         kpi_table = pd.DataFrame({
             "KPI": ["Execution Time (ms)", "Rows Processed"],
             "Snowflake (Original)": [metrics_sf_orig["execution_time_ms"], metrics_sf_orig["rows_processed"]],
-            "Snowflake (Optimized)": [metrics_sf_opt["execution_time_ms"], metrics_sf_opt["rows_processed"]],
+            # "Snowflake (Optimized)": [metrics_sf_opt["execution_time_ms"], metrics_sf_opt["rows_processed"]],
             "Databricks (Original)": [metrics_db_orig["execution_time_ms"], metrics_db_orig["rows_processed"]],
             "Databricks (Optimized)": [metrics_db_opt["execution_time_ms"], metrics_db_opt["rows_processed"]],
         })
@@ -382,6 +417,14 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
         if used_retry_opt:
             retry_notes.append("The optimized Databricks query required a retry.")
 
+        sf_orig_success = "error" not in metrics_sf_orig
+        db_orig_success = "error" not in metrics_db_orig
+        db_opt_success = "error" not in metrics_db_opt
+        shape_match = df_sf_norm.shape == df_db_norm.shape
+        column_match = list(df_sf_norm.columns) == list(df_db_norm.columns)
+        row_count_match = len(df_sf_norm) == len(df_db_norm)
+        data_match = match
+
         # Include retry notes in the result
         result = {
             "validation_status": "success" if match else "fail",
@@ -390,7 +433,10 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
                 "reason": "Row values differ (check row order or precision)"
             }],
             "performance_metrics": kpi_table.to_dict(orient="records"),  # ready for Streamlit
-            "retry_notes": retry_notes if retry_notes else []
+            "retry_notes": retry_notes if retry_notes else [],
+            "validation_df": build_validation_summary(df_sf_norm, df_db_norm, sf_orig_success, db_orig_success, 
+                                                      db_opt_success, shape_match, column_match, 
+                                                      row_count_match, data_match)
         }
 
         return result

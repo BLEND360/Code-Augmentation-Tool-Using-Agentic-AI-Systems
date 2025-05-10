@@ -204,7 +204,11 @@ if st.session_state.interactive_chat_history:
                         else:
                             st.error("Validation Result: Validation failed!")
                             for issue in validation_result.get("failed_checks", []):
-                                st.markdown(f"- **{issue['check']}**: {issue['reason']}")                                      
+                                st.markdown(f"- **{issue['check']}**: {issue['reason']}")   
+                        validation_table = validation_result.get("validation_df")
+                        if validation_table is not None:
+                            st.markdown("🔍 Detailed Validation Summary")
+                            st.dataframe(validation_table, hide_index=True)
 
 # Chat input
 user_question = st.chat_input("Type your Snowflake SQL query...")
@@ -283,3 +287,7 @@ if user_question:
                             st.error("Validation Result: Validation failed!")
                             for issue in validation_result.get("failed_checks", []):
                                 st.markdown(f"- **{issue['check']}**: {issue['reason']}")
+                        validation_table = validation_result.get("validation_df")
+                        if validation_table is not None:
+                            st.markdown("🔍 Detailed Validation Summary")
+                            st.dataframe(validation_table, hide_index=True)
