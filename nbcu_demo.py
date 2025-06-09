@@ -125,7 +125,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Code Augmentation Using Agentic AI")
+st.title("Code Refinement & Interpretation Agentic AI System")
 
 # Initialize session state for chat history
 if "interactive_chat_history" not in st.session_state:
