@@ -148,55 +148,76 @@ def strip_sql_hints(query: str) -> str:
     hint_pattern = r'/\*\+.*?\*/'
     return re.sub(hint_pattern, '', query, flags=re.DOTALL)
 
-def qualify_tables(query: str, db_name: str):
-    """
-    Fully qualify tables in FROM and JOIN clauses with the database name.
-    Checks if tables are already qualified to avoid double qualification.
-    """
-    # Detect CTEs so we don't qualify them
-    cte_pattern = r"WITH\s+(.+?)\s+AS\s*\("
-    cte_matches = re.findall(cte_pattern, query, flags=re.IGNORECASE | re.DOTALL)
-    cte_names = set()
-    if cte_matches:
-        for match in cte_matches:
-            # Handle multiple CTEs separated by commas
-            cte_sections = re.split(r',\s*(?=[a-zA-Z_][\w]*\s+AS\s*\()', match)
-            for section in cte_sections:
-                # Extract CTE name
-                cte_name_match = re.match(r'([a-zA-Z_][\w]*)', section.strip())
-                if cte_name_match:
-                    cte_names.add(cte_name_match.group(1).lower())
+# def qualify_tables(query: str, db_name: str):
+#     """
+#     Fully qualify tables in FROM and JOIN clauses with the database name.
+#     Checks if tables are already qualified to avoid double qualification.
+#     """
+#     # Detect CTEs so we don't qualify them
+#     cte_pattern = r"WITH\s+(.+?)\s+AS\s*\("
+#     cte_matches = re.findall(cte_pattern, query, flags=re.IGNORECASE | re.DOTALL)
+#     cte_names = set()
+#     if cte_matches:
+#         for match in cte_matches:
+#             # Handle multiple CTEs separated by commas
+#             cte_sections = re.split(r',\s*(?=[a-zA-Z_][\w]*\s+AS\s*\()', match)
+#             for section in cte_sections:
+#                 # Extract CTE name
+#                 cte_name_match = re.match(r'([a-zA-Z_][\w]*)', section.strip())
+#                 if cte_name_match:
+#                     cte_names.add(cte_name_match.group(1).lower())
 
-    # This pattern captures FROM or JOIN followed by table name, optional alias
-    # More complex to handle table names with or without aliases
-    table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)((?:\s+(?:AS\s+)?[a-zA-Z_][\w]*)?)'
+#     # This pattern captures FROM or JOIN followed by table name, optional alias
+#     # More complex to handle table names with or without aliases
+#     table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)((?:\s+(?:AS\s+)?[a-zA-Z_][\w]*)?)'
+
+#     def replacer(match):
+#         keyword = match.group(1)  # FROM or JOIN
+#         table = match.group(2)    # Table name (possibly with qualifier)
+#         alias_part = match.group(3) or ''  # Alias part (including potential AS)
+
+#         # Skip CTEs
+#         if table.lower() in cte_names:
+#             return match.group(0)
+
+#         # Skip if already qualified with the same database name
+#         if table.lower().startswith(f"{db_name.lower()}."):
+#             return match.group(0)
+            
+#         # Skip if has any qualifier (contains a dot)
+#         if '.' in table:
+#             return match.group(0)
+
+#         return f"{keyword} {db_name}.{table}{alias_part}"
+
+#     # Apply the regex replacement
+#     qualified_query = re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
+    
+#     print(f"Original query: {query}")
+#     print(f"Qualified query: {qualified_query}")
+    
+#     return qualified_query
+
+def qualify_tables(query: str, db_name: str) -> str:
+    """
+    Qualify real table names in FROM and JOIN clauses.
+    Skips CTEs and any aliases defined inside the query.
+    """
+    # Step 1: Extract CTEs
+    cte_defs = re.findall(r'([a-zA-Z_][\w]*)\s+AS\s*\(', query, flags=re.IGNORECASE)
+    cte_names = set(name.lower() for name in cte_defs)
+
+    # Step 2: Rewrite FROM and JOIN only for real tables
+    table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*)\b'
 
     def replacer(match):
-        keyword = match.group(1)  # FROM or JOIN
-        table = match.group(2)    # Table name (possibly with qualifier)
-        alias_part = match.group(3) or ''  # Alias part (including potential AS)
-
-        # Skip CTEs
+        keyword, table = match.groups()
         if table.lower() in cte_names:
-            return match.group(0)
+            return f"{keyword} {table}"
+        return f"{keyword} {db_name}.{table}"
 
-        # Skip if already qualified with the same database name
-        if table.lower().startswith(f"{db_name.lower()}."):
-            return match.group(0)
-            
-        # Skip if has any qualifier (contains a dot)
-        if '.' in table:
-            return match.group(0)
+    return re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
 
-        return f"{keyword} {db_name}.{table}{alias_part}"
-
-    # Apply the regex replacement
-    qualified_query = re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
-    
-    print(f"Original query: {query}")
-    print(f"Qualified query: {qualified_query}")
-    
-    return qualified_query
 
 def retry_databricks_query(conn, query_string, db_name, max_retries=1):
     """
