@@ -206,9 +206,20 @@ def strip_sql_hints(query: str) -> str:
     hint_pattern = r'/\*\+.*?\*/'
     return re.sub(hint_pattern, '', query, flags=re.DOTALL)
 
+
+def strip_sql_hints(query: str) -> str:
+    """
+    Remove SQL hints that are incompatible between different SQL engines
+    Handles Snowflake-style hints like /*+ BROADCAST */ and similar
+    """
+    # Remove /*+ ... */ style hints
+    hint_pattern = r'/\*\+.*?\*/'
+    return re.sub(hint_pattern, '', query, flags=re.DOTALL)
+
 def qualify_tables(query: str, db_name: str):
     """
     Fully qualify tables in FROM and JOIN clauses with the database name.
+    Checks if tables are already qualified to avoid double qualification.
     Checks if tables are already qualified to avoid double qualification.
     """
     # Detect CTEs so we don't qualify them
@@ -224,12 +235,24 @@ def qualify_tables(query: str, db_name: str):
                 cte_name_match = re.match(r'([a-zA-Z_][\w]*)', section.strip())
                 if cte_name_match:
                     cte_names.add(cte_name_match.group(1).lower())
+            # Handle multiple CTEs separated by commas
+            cte_sections = re.split(r',\s*(?=[a-zA-Z_][\w]*\s+AS\s*\()', match)
+            for section in cte_sections:
+                # Extract CTE name
+                cte_name_match = re.match(r'([a-zA-Z_][\w]*)', section.strip())
+                if cte_name_match:
+                    cte_names.add(cte_name_match.group(1).lower())
 
     # This pattern captures FROM or JOIN followed by table name, optional alias
     # More complex to handle table names with or without aliases
     table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)((?:\s+(?:AS\s+)?[a-zA-Z_][\w]*)?)'
+    # More complex to handle table names with or without aliases
+    table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)((?:\s+(?:AS\s+)?[a-zA-Z_][\w]*)?)'
 
     def replacer(match):
+        keyword = match.group(1)  # FROM or JOIN
+        table = match.group(2)    # Table name (possibly with qualifier)
+        alias_part = match.group(3) or ''  # Alias part (including potential AS)
         keyword = match.group(1)  # FROM or JOIN
         table = match.group(2)    # Table name (possibly with qualifier)
         alias_part = match.group(3) or ''  # Alias part (including potential AS)
@@ -243,9 +266,15 @@ def qualify_tables(query: str, db_name: str):
             return match.group(0)
             
         # Skip if has any qualifier (contains a dot)
+        # Skip if already qualified with the same database name
+        if table.lower().startswith(f"{db_name.lower()}."):
+            return match.group(0)
+            
+        # Skip if has any qualifier (contains a dot)
         if '.' in table:
             return match.group(0)
 
+        return f"{keyword} {db_name}.{table}{alias_part}"
         return f"{keyword} {db_name}.{table}{alias_part}"
 
     # Apply the regex replacement
@@ -257,7 +286,68 @@ def qualify_tables(query: str, db_name: str):
     return qualified_query
 
 def retry_databricks_query(conn, query_string, db_name, max_retries=1):
+    # Apply the regex replacement
+    qualified_query = re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
+    
+    print(f"Original query: {query}")
+    print(f"Qualified query: {qualified_query}")
+    
+    return qualified_query
+
+def retry_databricks_query(conn, query_string, db_name, max_retries=1):
     """
+    Run a query on Databricks with automatic retry logic for table not found errors.
+    Only measures execution time for the successful attempt.
+    
+    Args:
+        conn: Databricks connection object
+        query_string: SQL query to execute
+        db_name: Database name for table qualification
+        max_retries: Maximum number of retries (default=1)
+        
+    Returns:
+        Tuple of (result DataFrame, metrics dictionary)
+    """
+    # First try - use the query as-is
+    df, metrics = run_query_with_timer(conn, query_string)
+    
+    # Check if we got an error about table not found
+    retry_count = 0
+    while "error" in metrics and "TABLE_OR_VIEW_NOT_FOUND" in metrics["error"] and retry_count < max_retries:
+        retry_count += 1
+        print(f"Table not found error, retrying (attempt {retry_count}/{max_retries})...")
+        
+        # For the retry, explicitly qualify all tables with the database name
+        # But don't qualify if already qualified
+        qualified_query = qualify_tables(query_string, db_name)
+        
+        # Wait a moment to allow metadata to be loaded (helps with connection issues)
+        time.sleep(1)
+        
+        # Try again with the qualified query - this is the timing that matters
+        df, metrics = run_query_with_timer(conn, qualified_query)
+    
+    # Add a flag to indicate if we used a retry
+    if retry_count > 0 and "error" not in metrics:
+        metrics["used_retry"] = True
+    
+    return df, metrics
+
+def warm_up_databricks_connection(conn, db_name):
+    """
+    Run a simple query to warm up the Databricks connection and cache table metadata.
+    This helps ensure more accurate timing for subsequent queries.
+    """
+    try:
+        # Simple query to list tables in the database
+        warm_up_query = f"SHOW TABLES IN {db_name}"
+        conn.cursor().execute(warm_up_query)
+        print(f"Connection to {db_name} warmed up successfully")
+        
+        # Wait a moment for metadata to be loaded
+        time.sleep(1)
+    except Exception as e:
+        print(f"Warning: Failed to warm up connection: {e}")
     Run a query on Databricks with automatic retry logic for table not found errors.
     Only measures execution time for the successful attempt.
     
@@ -324,7 +414,23 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
         except Exception as e:
             print(f"Warning: Failed to warm up connection: {e}")
 
+        
+        # Warm up the Databricks connection first to load metadata
+        try:
+            warm_up_query = f"SHOW TABLES IN {db_name}"
+            conn_db.cursor().execute(warm_up_query)
+            print(f"Connection to {db_name} warmed up successfully")
+            time.sleep(1)
+        except Exception as e:
+            print(f"Warning: Failed to warm up connection: {e}")
+
         # 🔵 Strip SQL hints for Databricks
+        db_orig_query = strip_sql_hints(original_query)
+        db_opt_query = strip_sql_hints(optimized_query)
+        
+        # Ensure both queries have the same level of table qualification
+        db_orig_query = qualify_tables(db_orig_query, db_name)
+        db_opt_query = qualify_tables(db_opt_query, db_name)
         db_orig_query = strip_sql_hints(original_query)
         db_opt_query = strip_sql_hints(optimized_query)
         
@@ -427,6 +533,11 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
         used_retry_opt = retry_count_opt > 0
 
         # 🔵 Prepare Metrics Table with numeric values only
+        # Track if we used retries
+        used_retry_orig = retry_count_orig > 0
+        used_retry_opt = retry_count_opt > 0
+
+        # 🔵 Prepare Metrics Table with numeric values only
         kpi_table = pd.DataFrame({
             "KPI": ["Execution Time (ms)", "Rows Processed"],
             "Snowflake (Original)": [metrics_sf_orig["execution_time_ms"], metrics_sf_orig["rows_processed"]],
@@ -453,7 +564,11 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
             }],
             "performance_metrics": kpi_table.to_dict(orient="records"),  # ready for Streamlit
             "retry_notes": retry_notes if retry_notes else []
+            "performance_metrics": kpi_table.to_dict(orient="records"),  # ready for Streamlit
+            "retry_notes": retry_notes if retry_notes else []
         }
+
+        return result
 
         return result
 
