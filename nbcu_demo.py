@@ -11,8 +11,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph.message import add_messages
 from utils import ConverterState
 from databricks import sql  
-import snowflake.connector
-from services.validation_engine import validate_query_across_engines
+from snowflake import connector
+from services.validation_engine import validate_query_across_engines#, validate_query_across_engines2
 from services.db_connectors import connect_to_snowflake, connect_to_databricks
 from services.query_processor import parse_sql_to_ast, translate_ast_to_ansi, validate_ansi_sql, optimize_joins_aggregations, optimize_simplify_query, optimize_data_filtering, coordinate_results, document_final_sql
 import time
@@ -178,7 +178,7 @@ if st.session_state.interactive_chat_history:
                             metrics_df = pd.DataFrame(intermediate["performance_metrics"])
 
                             if set(["Databricks (Original)", "Databricks (Optimized)"]).issubset(metrics_df.columns):
-                                metrics_df = metrics_df[["KPI", "Databricks (Original)", "Databricks (Optimized)"]]
+                                metrics_df = metrics_df[["KPI", "Snowflake (Original)", "Snowflake (Optimized)", "Databricks (Original)", "Databricks (Optimized)"]]
 
                                 if "index" in metrics_df.columns:
                                     metrics_df = metrics_df.drop(columns=["index"])
@@ -256,7 +256,7 @@ if user_question:
                             metrics_df = pd.DataFrame(intermediate_results["performance_metrics"])
 
                             if set(["Databricks (Original)", "Databricks (Optimized)"]).issubset(metrics_df.columns):
-                                metrics_df = metrics_df[["KPI", "Databricks (Original)", "Databricks (Optimized)"]]
+                                metrics_df = metrics_df[["KPI", "Snowflake (Original)", "Snowflake (Optimized)", "Databricks (Original)", "Databricks (Optimized)"]]
 
                                 if "index" in metrics_df.columns:
                                     metrics_df = metrics_df.drop(columns=["index"])
