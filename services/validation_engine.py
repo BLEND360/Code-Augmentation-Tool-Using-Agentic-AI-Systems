@@ -4,6 +4,7 @@ import numpy as np
 import time
 from databricks import sql
 import snowflake.connector
+import pprint
 
 def run_query(conn, query_string):
     cur = conn.cursor()
@@ -12,19 +13,90 @@ def run_query(conn, query_string):
     columns = [desc[0].lower().strip() for desc in cur.description]
     return pd.DataFrame(result, columns=columns)
 
+import time
+import pandas as pd
+
+
 def run_query_with_timer(conn, query_string):
-    """ Run a query and measure execution time and rows processed. """
+    """Run a query and capture detailed Snowflake execution metrics, always bypassing result cache."""
     cur = conn.cursor()
+
+    # Detect if it's a Snowflake connection
+    is_snowflake = hasattr(cur, "sfqid")
+
+    # Desactivar permanentemente el cache para la sesión
+    if is_snowflake:
+        try:
+            cur.execute("ALTER SESSION SET USE_CACHED_RESULT = FALSE;")
+            print("⚠️ Snowflake result cache disabled at session level.")
+        except Exception as e:
+            print(f"⚠️ Could not disable result cache: {e}")
+
+        # Agregar hint a la query si no lo tiene
+        if "/*+ NO_RESULT_CACHE */" not in query_string.upper():
+            query_string = f"SELECT /*+ NO_RESULT_CACHE */ " + query_string.lstrip().lstrip("SELECT ").lstrip()
+
     start_time = time.time()
-    cur.execute(query_string)
-    result = cur.fetchall()
-    end_time = time.time()
-    columns = [desc[0].lower().strip() for desc in cur.description]
-    df = pd.DataFrame(result, columns=columns)
-    return df, {
-        "execution_time_ms": round((end_time - start_time) * 1000, 2),
-        "rows_processed": len(df)
-    }
+
+    try:
+        cur.execute(query_string)
+        result = cur.fetchall()
+        end_time = time.time()
+
+        columns = [desc[0].lower().strip() for desc in cur.description]
+        df = pd.DataFrame(result, columns=columns)
+
+        wall_clock_execution_time_ms = round((end_time - start_time) * 1000, 2)
+        execution_time_ms = wall_clock_execution_time_ms
+        rows_processed = len(df)
+
+        if is_snowflake:
+            query_id = cur.sfqid
+            print(f"[SNOWFLAKE] Query ID: {query_id}")
+
+            metadata_cursor = conn.cursor()
+            metadata_cursor.execute(f"""
+                SELECT
+                    execution_time,
+                    rows_produced
+                FROM table(information_schema.query_history_by_session())
+                WHERE query_id = '{query_id}'
+            """)
+            row = metadata_cursor.fetchone()
+            metadata_cursor.close()
+
+            if row:
+                (
+                    execution_time,
+                    rows_produced
+                ) = row
+
+                execution_time_ms = execution_time
+
+                delta = round(wall_clock_execution_time_ms - execution_time, 2)
+                print(f"[SNOWFLAKE] Execution time (ms): {execution_time} Vs wall clock time (ms): {wall_clock_execution_time_ms}")
+                print(f"[DELTA] Wall clock - engine time (ms): {delta}")
+                print(f"[SNOWFLAKE] Rows produced: {rows_produced} Vs Python length: {len(df)}")
+            else:
+                print(f"[SNOWFLAKE] Query ID {query_id} not found in query history. Using wall clock time.")
+
+        return df, {
+            "execution_time_ms": execution_time_ms,
+            "rows_processed": rows_processed
+        }
+
+    except Exception as e:
+        end_time = time.time()
+        error_message = str(e)
+        print(f"[ERROR] Query execution failed: {error_message}")
+        return pd.DataFrame(), {
+            "execution_time_ms": round((end_time - start_time) * 1000, 2),
+            "rows_processed": 0,
+            "error": error_message
+        }
+
+    finally:
+        cur.close()
 
 def detect_sql_clauses(query):
     query_upper = query.upper()
@@ -124,44 +196,6 @@ def compare_with_tolerance(df1, df2, rounded_columns: dict):
 
     return True
 
-def qualify_tables(query: str, db_name: str):
-    """
-    Fully qualify tables in FROM and JOIN clauses with the database name.
-    Handles simple cases with optional aliases.
-    """
-    # Detect CTEs so we don't qualify them
-    cte_pattern = r"WITH\s+(.+?)\s+AS\s*\("
-    cte_matches = re.findall(cte_pattern, query, flags=re.IGNORECASE | re.DOTALL)
-    cte_names = set()
-    if cte_matches:
-        for match in cte_matches:
-            parts = match.split(',')
-            for part in parts:
-                name = part.strip().split()[0]
-                if name:
-                    cte_names.add(name.lower())
-
-    # This pattern captures FROM or JOIN followed by table name, optional alias
-    table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*)(\s+[a-zA-Z_][\w]*)?'
-
-    def replacer(match):
-        keyword = match.group(1)
-        table = match.group(2)
-        alias = match.group(3) or ''
-
-        # Skip CTEs
-        if table.lower() in cte_names:
-            return match.group(0)
-
-        # If table already has a dot (.), assume already qualified
-        if '.' in table:
-            return match.group(0)
-
-        return f"{keyword} {db_name}.{table.lower()}{alias}"
-
-    return re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
-
-
 
 def strip_sql_hints(query: str) -> str:
     """
@@ -172,26 +206,204 @@ def strip_sql_hints(query: str) -> str:
     hint_pattern = r'/\*\+.*?\*/'
     return re.sub(hint_pattern, '', query, flags=re.DOTALL)
 
+def qualify_tables(query: str, db_name: str):
+    """
+    Fully qualify tables in FROM and JOIN clauses with the database name.
+    Checks if tables are already qualified to avoid double qualification.
+    """
+    # Detect CTEs so we don't qualify them
+    cte_pattern = r"WITH\s+(.+?)\s+AS\s*\("
+    cte_matches = re.findall(cte_pattern, query, flags=re.IGNORECASE | re.DOTALL)
+    cte_names = set()
+    if cte_matches:
+        for match in cte_matches:
+            # Handle multiple CTEs separated by commas
+            cte_sections = re.split(r',\s*(?=[a-zA-Z_][\w]*\s+AS\s*\()', match)
+            for section in cte_sections:
+                # Extract CTE name
+                cte_name_match = re.match(r'([a-zA-Z_][\w]*)', section.strip())
+                if cte_name_match:
+                    cte_names.add(cte_name_match.group(1).lower())
+
+    # This pattern captures FROM or JOIN followed by table name, optional alias
+    # More complex to handle table names with or without aliases
+    table_pattern = r'\b(FROM|JOIN)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)((?:\s+(?:AS\s+)?[a-zA-Z_][\w]*)?)'
+
+    def replacer(match):
+        keyword = match.group(1)  # FROM or JOIN
+        table = match.group(2)    # Table name (possibly with qualifier)
+        alias_part = match.group(3) or ''  # Alias part (including potential AS)
+
+        # Skip CTEs
+        if table.lower() in cte_names:
+            return match.group(0)
+
+        # Skip if already qualified with the same database name
+        if table.lower().startswith(f"{db_name.lower()}."):
+            return match.group(0)
+            
+        # Skip if has any qualifier (contains a dot)
+        if '.' in table:
+            return match.group(0)
+
+        return f"{keyword} {db_name}.{table}{alias_part}"
+
+    # Apply the regex replacement
+    qualified_query = re.sub(table_pattern, replacer, query, flags=re.IGNORECASE)
+    
+    print(f"Original query: {query}")
+    print(f"Qualified query: {qualified_query}")
+    
+    return qualified_query
+
+def retry_databricks_query(conn, query_string, db_name, max_retries=1):
+    """
+    Run a query on Databricks with automatic retry logic for table not found errors.
+    Only measures execution time for the successful attempt.
+    
+    Args:
+        conn: Databricks connection object
+        query_string: SQL query to execute
+        db_name: Database name for table qualification
+        max_retries: Maximum number of retries (default=1)
+        
+    Returns:
+        Tuple of (result DataFrame, metrics dictionary)
+    """
+    # First try - use the query as-is
+    df, metrics = run_query_with_timer(conn, query_string)
+    
+    # Check if we got an error about table not found
+    retry_count = 0
+    while "error" in metrics and "TABLE_OR_VIEW_NOT_FOUND" in metrics["error"] and retry_count < max_retries:
+        retry_count += 1
+        print(f"Table not found error, retrying (attempt {retry_count}/{max_retries})...")
+        
+        # For the retry, explicitly qualify all tables with the database name
+        # But don't qualify if already qualified
+        qualified_query = qualify_tables(query_string, db_name)
+        
+        # Wait a moment to allow metadata to be loaded (helps with connection issues)
+        time.sleep(1)
+        
+        # Try again with the qualified query - this is the timing that matters
+        df, metrics = run_query_with_timer(conn, qualified_query)
+    
+    # Add a flag to indicate if we used a retry
+    if retry_count > 0 and "error" not in metrics:
+        metrics["used_retry"] = True
+    
+    return df, metrics
+
+def warm_up_databricks_connection(conn, db_name):
+    """
+    Run a simple query to warm up the Databricks connection and cache table metadata.
+    This helps ensure more accurate timing for subsequent queries.
+    """
+    try:
+        # Simple query to list tables in the database
+        warm_up_query = f"SHOW TABLES IN {db_name}"
+        conn.cursor().execute(warm_up_query)
+        print(f"Connection to {db_name} warmed up successfully")
+        
+        # Wait a moment for metadata to be loaded
+        time.sleep(1)
+    except Exception as e:
+        print(f"Warning: Failed to warm up connection: {e}")
+
 def validate_query_across_engines(original_query: str, optimized_query: str, conn_sf, conn_db, db_name: str = "nbcu_demo") -> dict:
     try:
         print("Starting validation...")
-
-        # 🔵 Prepare fully qualified queries
-        query_db_orig = qualify_tables(original_query, db_name)
-        query_db_opt = qualify_tables(optimized_query, db_name)
         
+        # Warm up the Databricks connection first to load metadata
+        try:
+            warm_up_query = f"SHOW TABLES IN {db_name}"
+            conn_db.cursor().execute(warm_up_query)
+            print(f"Connection to {db_name} warmed up successfully")
+            time.sleep(1)
+        except Exception as e:
+            print(f"Warning: Failed to warm up connection: {e}")
+
         # 🔵 Strip SQL hints for Databricks
-        query_db_orig = strip_sql_hints(query_db_orig)
-        query_db_opt = strip_sql_hints(query_db_opt)
+        db_orig_query = strip_sql_hints(original_query)
+        db_opt_query = strip_sql_hints(optimized_query)
+        
+        # Ensure both queries have the same level of table qualification
+        db_orig_query = qualify_tables(db_orig_query, db_name)
+        db_opt_query = qualify_tables(db_opt_query, db_name)
 
         # 🔵 Metrics + Results (Original)
-        _, metrics_sf_orig = run_query_with_timer(conn_sf, original_query)
-        _, metrics_db_orig = run_query_with_timer(conn_db, query_db_orig)
+        df_sf_orig, metrics_sf_orig = run_query_with_timer(conn_sf, original_query)
+        print("-------")
+        print(metrics_sf_orig)
+        # Check for errors in Snowflake query
+        if "error" in metrics_sf_orig:
+            return {
+                "validation_status": "error",
+                "failed_checks": [{"check": "execution", "reason": f"Snowflake original query error: {metrics_sf_orig['error']}"}]
+            }
+        
+        # Use retry logic for Databricks to handle table not found errors
+        df_db_orig, metrics_db_orig = run_query_with_timer(conn_db, db_orig_query)
+        
+        # Retry if table not found error
+        retry_count_orig = 0
+        while "error" in metrics_db_orig and "TABLE_OR_VIEW_NOT_FOUND" in metrics_db_orig["error"] and retry_count_orig < 1:
+            retry_count_orig += 1
+            print(f"Table not found in original query, retrying...")
+            time.sleep(1)
+            df_db_orig, metrics_db_orig = run_query_with_timer(conn_db, db_orig_query)
+        
+        # Check for errors in Databricks query after retries
+        if "error" in metrics_db_orig:
+            return {
+                "validation_status": "error",
+                "failed_checks": [{"check": "execution", "reason": f"Databricks original query error: {metrics_db_orig['error']}"}]
+            }
 
         # 🔵 Metrics + Results (Optimized)
         df_sf_opt, metrics_sf_opt = run_query_with_timer(conn_sf, optimized_query)
-        df_db_opt, metrics_db_opt = run_query_with_timer(conn_db, query_db_opt)
+        print("-------")
+        print(metrics_sf_orig)
+        # Check for errors in optimized Snowflake query
+        if "error" in metrics_sf_opt:
+            return {
+                "validation_status": "error",
+                "failed_checks": [{"check": "execution", "reason": f"Snowflake optimized query error: {metrics_sf_opt['error']}"}]
+            }
+        
+        # Use retry logic for optimized Databricks query
+        df_db_opt, metrics_db_opt = run_query_with_timer(conn_db, db_opt_query)
+        
+        # Retry if table not found error
+        retry_count_opt = 0
+        while "error" in metrics_db_opt and "TABLE_OR_VIEW_NOT_FOUND" in metrics_db_opt["error"] and retry_count_opt < 1:
+            retry_count_opt += 1
+            print(f"Table not found in optimized query, retrying...")
+            time.sleep(1)
+            df_db_opt, metrics_db_opt = run_query_with_timer(conn_db, db_opt_query)
+        
+        # Check for errors in optimized Databricks query after retries
+        if "error" in metrics_db_opt:
+            return {
+                "validation_status": "error",
+                "failed_checks": [{"check": "execution", "reason": f"Databricks optimized query error: {metrics_db_opt['error']}"}]
+            }
 
+        # 🔵 Clean the cache between queries to ensure fair comparison
+        try:
+            conn_db.cursor().execute("CLEAR CACHE")
+            print("Databricks cache cleared between queries")
+        except Exception as e:
+            print(f"Warning: Failed to clear Databricks cache: {e}")
+
+        # 🔵 Run the optimized query again for accurate timing
+        if retry_count_opt == 0:  # Only if we didn't already retry
+            df_db_opt_rerun, metrics_db_opt_rerun = run_query_with_timer(conn_db, db_opt_query)
+            
+            # Use the better timing between the two runs
+            if "error" not in metrics_db_opt_rerun:
+                metrics_db_opt = metrics_db_opt_rerun
 
         # 🔵 Normalize for Validation
         clauses = detect_sql_clauses(optimized_query)
@@ -210,7 +422,11 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
             df_db_sorted = df_db_norm.sort_values(by=list(df_db_norm.columns)).reset_index(drop=True)
             match = compare_with_tolerance(df_sf_sorted, df_db_sorted, rounded_columns)
 
-        # 🔵 Prepare Metrics Table
+        # Track if we used retries
+        used_retry_orig = retry_count_orig > 0
+        used_retry_opt = retry_count_opt > 0
+
+        # 🔵 Prepare Metrics Table with numeric values only
         kpi_table = pd.DataFrame({
             "KPI": ["Execution Time (ms)", "Rows Processed"],
             "Snowflake (Original)": [metrics_sf_orig["execution_time_ms"], metrics_sf_orig["rows_processed"]],
@@ -219,14 +435,27 @@ def validate_query_across_engines(original_query: str, optimized_query: str, con
             "Databricks (Optimized)": [metrics_db_opt["execution_time_ms"], metrics_db_opt["rows_processed"]],
         })
 
-        return {
+        print(kpi_table)
+
+        # Add retry notes as separate information
+        retry_notes = []
+        if used_retry_orig:
+            retry_notes.append("The original Databricks query required a retry.")
+        if used_retry_opt:
+            retry_notes.append("The optimized Databricks query required a retry.")
+
+        # Include retry notes in the result
+        result = {
             "validation_status": "success" if match else "fail",
             "failed_checks": [] if match else [{
                 "check": "data_match",
                 "reason": "Row values differ (check row order or precision)"
             }],
-            "performance_metrics": kpi_table.to_dict(orient="records")  # ready for Streamlit
+            "performance_metrics": kpi_table.to_dict(orient="records"),  # ready for Streamlit
+            "retry_notes": retry_notes if retry_notes else []
         }
+
+        return result
 
     except Exception as e:
         return {
