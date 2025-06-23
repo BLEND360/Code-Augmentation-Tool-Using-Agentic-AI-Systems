@@ -1,6 +1,6 @@
 snowflake:
   account: "WB19670-C2GPARTNERS"
-  user: "xxxx.xxxx@BLEND360.COM"
+  user: "xxxx@blend360.com"
   authenticator: "externalbrowser"
   database: "SANDBOX"
   schema: "DS"
@@ -8,18 +8,10 @@ snowflake:
 databricks:
   server_hostname: "dbc-ff1901e9-f7d0.cloud.databricks.com"
   http_path: "/sql/1.0/warehouses/0f76c12366c1c229"
-  access_token: "xxxxxxxx"
+  access_token: "xxxxxx"
   database: "nbcu_demo"
-
-validation:
-  unique_columns:
-    NBCU_CUSTOMERS: "customer_id"
-    NBCU_DEPARTMENTS: "department_id"
-    NBCU_EMPLOYEES: "employee_id"
-    NBCU_PRODUCTS: "product_id"
-    NBCU_PROJECTS: "project_id"
-    NBCU_SALES: "sale_id"
-    NBCU_SUPPLIERS: "supplier_id"
-    NBCU_SUPPLY_CHAIN: "supply_chain_id"
+  warehouse_id: "0f76c12366c1c229"
+  api_url: "https://dbc-ff1901e9-f7d0.cloud.databricks.com/api/2.0/sql/statements"
+  query_history_url: "https://dbc-ff1901e9-f7d0.cloud.databricks.com/api/2.0/sql/history/queries/"
 
 

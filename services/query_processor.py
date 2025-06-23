@@ -5,6 +5,10 @@ from langchain_openai import ChatOpenAI
 from utils import ConverterState, parse_final_optimised_query
 from .query_processor_prompts import parse_sql_to_ast_prompt, translate_ast_to_ansi_prompt, validate_ansi_sql_prompt, optimize_joins_aggregations_prompt, optimize_simplify_query_prompt, optimize_data_filtering_prompt, coordinate_results_prompt, document_final_sql_prompt
 
+# from dotenv import load_dotenv
+# # Load environment variables from a .env file
+# load_dotenv()
+
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 llm = ChatOpenAI(
