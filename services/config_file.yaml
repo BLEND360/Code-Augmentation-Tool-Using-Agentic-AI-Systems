@@ -8,8 +8,12 @@ snowflake:
 databricks:
   server_hostname: "dbc-ff1901e9-f7d0.cloud.databricks.com"
   http_path: "/sql/1.0/warehouses/0f76c12366c1c229"
-  access_token: "xxxxxxxx"
+  access_token: "xxxx"
   database: "nbcu_demo"
+  warehouse_id: "0f76c12366c1c229"
+  api_url: "https://dbc-ff1901e9-f7d0.cloud.databricks.com/api/2.0/sql/statements"
+  query_history_url: "https://dbc-ff1901e9-f7d0.cloud.databricks.com/api/2.0/sql/history/queries/"
+
 
 validation:
   unique_columns:

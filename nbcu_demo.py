@@ -178,7 +178,7 @@ if st.session_state.interactive_chat_history:
                             metrics_df = pd.DataFrame(intermediate["performance_metrics"])
 
                             if set(["Databricks (Original)", "Databricks (Optimized)"]).issubset(metrics_df.columns):
-                                metrics_df = metrics_df[["KPI", "Snowflake (Original)", "Snowflake (Optimized)", "Databricks (Original)", "Databricks (Optimized)"]]
+                                metrics_df = metrics_df[["KPI", "Snowflake (Original)", "Databricks (Original)", "Databricks (Optimized)"]]
 
                                 if "index" in metrics_df.columns:
                                     metrics_df = metrics_df.drop(columns=["index"])
@@ -256,7 +256,7 @@ if user_question:
                             metrics_df = pd.DataFrame(intermediate_results["performance_metrics"])
 
                             if set(["Databricks (Original)", "Databricks (Optimized)"]).issubset(metrics_df.columns):
-                                metrics_df = metrics_df[["KPI", "Snowflake (Original)", "Snowflake (Optimized)", "Databricks (Original)", "Databricks (Optimized)"]]
+                                metrics_df = metrics_df[["KPI", "Snowflake (Original)", "Databricks (Original)", "Databricks (Optimized)"]]
 
                                 if "index" in metrics_df.columns:
                                     metrics_df = metrics_df.drop(columns=["index"])
