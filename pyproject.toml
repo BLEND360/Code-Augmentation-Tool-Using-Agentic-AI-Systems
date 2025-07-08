@@ -1,0 +1,37 @@
+[project]
+name = "code-augmentation-tool-using-agentic-ai-systems"
+version = "0.1.0"
+description = "AI-driven SQL optimization system that transforms inefficient Snowflake SQL into optimized ANSI SQL for Databricks"
+readme = "README.md"
+requires-python = ">=3.10"
+
+authors = [
+  { name = "CoE Acelerator"}
+]
+
+dependencies = [
+  "databricks==0.2",
+  "langchain-core==0.3.68",
+  "langchain-openai==0.3.27",
+  "langgraph==0.5.1",
+  "numpy>=1.24,<2.0.0",
+  "pandas==2.3.1",
+  "pyyaml==6.0.2",
+  "requests==2.32.4",
+  "snowflake-connector-python==3.15.0",
+  "streamlit==1.32.0"
+]
+
+[tool.uv]
+
+[tool.ruff]
+line-length = 120
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-v"]
