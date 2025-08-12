@@ -7,7 +7,8 @@ def connect_to_snowflake(sf_config):
         account=sf_config["account"],
         authenticator=sf_config["authenticator"],
         database=sf_config["database"],
-        schema=sf_config["schema"]
+        schema=sf_config["schema"],
+        warehouse=sf_config["warehouse"]
     )
 
 def connect_to_databricks(db_config):

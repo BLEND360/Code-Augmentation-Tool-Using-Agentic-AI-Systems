@@ -1,14 +1,15 @@
 snowflake:
   account: "WB19670-C2GPARTNERS"
-  user: "xxxx@blend360.com"
+  user: "xxxx.xxxx@blend360.com"
   authenticator: "externalbrowser"
   database: "SANDBOX"
   schema: "DS"
+  warehouse: "WH_SMALL"
 
 databricks:
   server_hostname: "dbc-ff1901e9-f7d0.cloud.databricks.com"
   http_path: "/sql/1.0/warehouses/0f76c12366c1c229"
-  access_token: "xxxxxx"
+  access_token: "xxxx"
   database: "nbcu_demo"
   warehouse_id: "0f76c12366c1c229"
   api_url: "https://dbc-ff1901e9-f7d0.cloud.databricks.com/api/2.0/sql/statements"
