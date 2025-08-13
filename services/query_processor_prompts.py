@@ -37,6 +37,7 @@ parse_sql_to_ast_prompt = """
     12) If you are unsure about certain Snowflake keywords, model them as logically as possible. For instance, treat ILIKE as a variant of a comparison operator, or store it under some "operator" key.
     13) Do not wrap your JSON in triple backticks (```), or any other code fence formatting.
     14) Do not prepend or append any text before or after the JSON. The final answer should be raw JSON.
+      
 
     Output:
      - A strictly valid JSON AST reflecting all clauses in the input Snowflake SQL.
@@ -84,11 +85,11 @@ translate_ast_to_ansi_prompt = """
     13) Verify function calls or operators are recognized by ANSI-based engines. If not, approximate them.
     14) Avoid re-outputting AST or JSON. Only return the final ANSI SQL statement.
     15) Re-check syntax for correctness. Missing commas or mismatched parentheses are unacceptable.
-    16) In advanced transformations (like time-based correlations), consider using WITH clauses to maintain clarity.
-    17) If the Snowflake query has specific conditions, replicate them exactly in ANSI.
-    18) If encountering special Snowflake data types, see if you can find an ANSI equivalent. Otherwise, ask the user for details if needed.
-    19) Output only the final SQL. The user should be able to run it directly in a typical ANSI environment.
-    20) If the Snowflake SQL references multiple statements or semicolons, handle them or unify them. Typically produce one main statement if only one was in the input.
+    16) If the Snowflake query has specific conditions, replicate them exactly in ANSI.
+    17) If encountering special Snowflake data types, see if you can find an ANSI equivalent. Otherwise, ask the user for details if needed.
+    18) Output only the final SQL. The user should be able to run it directly in a typical ANSI environment.
+    19) If the Snowflake SQL references multiple statements or semicolons, handle them or unify them. Typically produce one main statement if only one was in the input.
+    20) Translated ANSI SQL query should NOT contain "WITH" clause. 
 
     Output:
      - A single ANSI SQL statement, logically identical to the original Snowflake query. It should be Syntactically correct with respect to ANSI.
@@ -96,10 +97,12 @@ translate_ast_to_ansi_prompt = """
     Important Notes:
      - The final query must run on standard ANSI SQL with no errors.
      - Do not produce code fences, JSON, or extra commentary—only the SQL statement.
+     - Do not use '*/*+ BROADCAST */*' or '**SUM**' type of formatting as it leads to SQL compilation errors.
      - This result will be validated by a subsequent step, so thoroughness matters.
      - You may use subqueries or CTEs to replicate advanced Snowflake constructs.
      - The final ANSI SQL must return the same data or rows as the Snowflake query would.
      - End your output right after the final SQL statement—nothing else.
+     - DO NOT use 'WITH' statements in the final query.
     End of prompt.
     """
 
@@ -166,6 +169,8 @@ validate_ansi_sql_prompt = """
      - If the translator missed a nuance, reintroduce subqueries or window functions as needed.
      - End your output immediately after the final SQL statement—no trailing lines.
      - The final validated ANSI SQL should replicate the original Snowflake results.
+     - The final validated ANSI SQL SHOULD NOT contain "WITH" keyword within the query.
+     - Do not use '/*+ BROADCAST */*' or '**SUM**' type of formatting as it leads to SQL compilation errors.
      - Overall, the ANSI Sql Query should produce same results as the initial Snowflake SQL Query. Let's say initial Snowflake Query returns 10 rows of data as output, translated ANSI SQL should also return the same 10 rows of data in the same order and should be ANSI compliant i.e the datatypes, keywords, etc. everything use should be ANSI Compliant.
      - The final output that will be produced should be correct syntactically and semantically. Keywords should be ANSI Compliant.
     End of prompt.
@@ -179,8 +184,7 @@ optimize_joins_aggregations_prompt = """
     Join Optimization Guidelines:
      1) Broadcast Join Optimization:
         - Identify joins where one table is significantly smaller than the other
-        - Add appropriate BROADCAST hints for small tables to avoid costly data shuffling
-        - Example: Converting "FROM large_table JOIN small_table" to "FROM large_table JOIN /*+ BROADCAST */ small_table"
+        - Do NOT use '/*+ BROADCAST */*' just do simple joins as broadcasting leads to SQL errors.
 
      2) Join Order Optimization:
         - Reorder joins to process smaller tables earlier in the execution plan
@@ -217,6 +221,7 @@ optimize_joins_aggregations_prompt = """
      1) Add clear SQL comments explaining each optimization made
      2) Optimize any subqueries or CTEs involved in joins/aggregations
      3) Suggest appropriate indexing strategies as SQL comments
+     4) Do NOT use "WITH" keyword as it slows down the execution.
 
     Important Notes:
      - Focus exclusively on optimizing joins and aggregations without changing query logic
@@ -225,6 +230,7 @@ optimize_joins_aggregations_prompt = """
      - Aggregations like SUM, AVG, or COUNT should be performed on filtered datasets when possible
      - All suggested optimizations should be compatible with ANSI SQL standards
      - ONLY return the optimized SQL query with comments explaining optimizations
+     - DO NOT use 'WITH' statements.
     """
 
 optimize_simplify_query_prompt = """

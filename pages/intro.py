@@ -59,14 +59,17 @@ def render():
 Below are some examples for efficient and inefficient SQL queries demonstrating how to extract valuable insights from this dataset,
     """
     )
-    st.write("**1. Total repeat customers**")
+    st.write("**1. Counting Seller Orders that inefficiently recalculates each row **")
     st.code("""
-SELECT c.customer_unique_id, COUNT(o.order_id) AS order_count
-FROM ca_customers c
-JOIN ca_orders o ON c.customer_id = o.customer_id
-GROUP BY c.customer_unique_id
-HAVING COUNT(o.order_id) > 1
-ORDER BY order_count DESC;
+SELECT 
+    o.order_id,
+    oi.seller_id,
+    (SELECT COUNT(*) 
+     FROM ca_order_items oi2 
+     WHERE oi2.seller_id = oi.seller_id) AS seller_order_count
+FROM ca_orders o
+CROSS JOIN ca_order_items oi
+WHERE o.order_id = oi.order_id;
 """, language="sql")
 
     st.write("**2. Monthly revenue from orders**")
@@ -79,48 +82,54 @@ GROUP BY month
 ORDER BY month;
 """, language="sql")
 
-    st.write("**3.  Get top 5 states by total revenue (inefficient-Redundant CTEs, Cross Joins, and Over-Nesting)**")
+    st.write("**3.  Get top states by total revenue (inefficient-Redundant CTEs, Cross Joins, and Over-Nesting)**")
     st.code("""
-WITH order_with_items AS (
-    SELECT o.order_id, c.customer_state, i.price, i.freight_value
-    FROM ca_orders o
-    CROSS JOIN ca_order_items i
-    JOIN ca_customers c ON o.customer_id = c.customer_id
-),
-state_revenue AS (
-    SELECT customer_state, SUM(price + freight_value) AS total_revenue
-    FROM order_with_items
-    GROUP BY customer_state
-)
-SELECT *
-FROM state_revenue
-WHERE customer_state IS NOT NULL
-ORDER BY total_revenue DESC
-LIMIT 5;
+SELECT final.customer_state, final.total_revenue
+FROM (
+    SELECT nested.customer_state, nested.total_revenue
+    FROM (
+        SELECT derived.customer_state,
+               SUM(derived.price + derived.freight_value) AS total_revenue
+        FROM (
+            SELECT c.customer_state, i.price, i.freight_value
+            FROM (
+                SELECT *
+                FROM ca_orders
+            ) o
+            JOIN (
+                SELECT *
+                FROM ca_order_items
+            ) i ON o.order_id = i.order_id
+            JOIN (
+                SELECT *
+                FROM ca_customers
+            ) c ON o.customer_id = c.customer_id
+            CROSS JOIN (
+                SELECT customer_state
+                FROM ca_customers
+            ) AS redundant_cross -- unnecessary cross join
+            WHERE c.customer_state IS NOT NULL
+        ) AS derived
+        GROUP BY derived.customer_state
+    ) AS nested
+) AS final
+ORDER BY final.total_revenue DESC;
 """, language="sql")
 
-    st.write("**4. Get monthly revenue per seller between 2016 and 2018 (inefficient-CTEs with Redundant Aggregation and Filters After Aggregation)**")
+    st.write("**4. Get number of customers per state**")
     st.code("""
-WITH seller_monthly AS (
-    SELECT 
-        o.order_purchase_timestamp,
-        i.seller_id,
-        i.price + i.freight_value AS revenue
-    FROM ca_orders o
-    JOIN ca_order_items i ON o.order_id = i.order_id
-),
-monthly_summary AS (
-    SELECT 
-        DATE_TRUNC('month', order_purchase_timestamp) AS revenue_month,
-        seller_id,
-        SUM(revenue) AS total_revenue
-    FROM seller_monthly
-    GROUP BY revenue_month, seller_id
-)
-SELECT *
-FROM monthly_summary
-WHERE EXTRACT(YEAR FROM revenue_month) BETWEEN 2016 AND 2018
-ORDER BY revenue_month DESC;
+SELECT 
+    c.customer_id,
+    c.customer_state,
+    -- Inefficient subquery: recalculates for each row
+    (SELECT COUNT(DISTINCT c2.customer_id)
+     FROM ca_customers c2
+     WHERE c2.customer_state = c.customer_state) AS customers_in_state
+FROM ca_customers c
+CROSS JOIN ca_order_items oi
+WHERE c.customer_id IN (
+    SELECT customer_id FROM ca_orders WHERE order_id = oi.order_id
+);
 """, language="sql")
     
     st.write("To explore a deeper understanding of the dataset structure and the relationships between the tables, please refer to the documentation available [here](https://blend360.atlassian.net/wiki/x/DAAbUw)")

@@ -216,6 +216,36 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype(str).str.strip().str.lower()
     return df
 
+
+def normalize_datetime_and_nulls(series):
+    """
+    Normalize datetime strings, NaN, and None values in a series
+    """
+
+    def normalize_value(value):
+        # Handle None and NaN
+        if value is None or pd.isna(value):
+            return ""
+
+        # Handle datetime strings
+        if isinstance(value, str):
+            # Strip whitespace
+            value = value.strip()
+
+            # Check if it's a datetime string
+            try:
+                # Try to parse as datetime and extract just the date part
+                dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                return dt.strftime('%Y-%m-%d')  # Return just the date part
+            except (ValueError, TypeError):
+                # Not a datetime string, return as is
+                return value
+
+        return value
+
+    return series.apply(normalize_value)
+
+
 def compare_with_tolerance(df1, df2, rounded_columns: dict):
     if df1.shape != df2.shape:
         print("[X] Shape mismatch:", df1.shape, df2.shape)
@@ -223,12 +253,16 @@ def compare_with_tolerance(df1, df2, rounded_columns: dict):
 
     for col in df1.columns:
         try:
-            col1 = df1[col]
-            col2 = df2[col]
+            col1 = df1[col].copy()
+            col2 = df2[col].copy()
+
+            # First, try to normalize datetime strings and nulls
+            col1_normalized = normalize_datetime_and_nulls(col1)
+            col2_normalized = normalize_datetime_and_nulls(col2)
 
             try:
-                num1 = pd.to_numeric(col1, errors='raise')
-                num2 = pd.to_numeric(col2, errors='raise')
+                num1 = pd.to_numeric(col1_normalized, errors='raise')
+                num2 = pd.to_numeric(col2_normalized, errors='raise')
 
                 if col in rounded_columns:
                     precision = rounded_columns[col]
@@ -249,8 +283,9 @@ def compare_with_tolerance(df1, df2, rounded_columns: dict):
                     return False
 
             except Exception:
-                str1 = col1.astype(str).str.strip().str.lower()
-                str2 = col2.astype(str).str.strip().str.lower()
+                # Use the normalized columns for string comparison
+                str1 = col1_normalized.astype(str).str.strip().str.lower()
+                str2 = col2_normalized.astype(str).str.strip().str.lower()
                 if not str1.equals(str2):
                     print(f"[X] Mismatch in string column '{col}':")
                     for i in range(len(str1)):
@@ -263,6 +298,53 @@ def compare_with_tolerance(df1, df2, rounded_columns: dict):
             return False
 
     return True
+# def compare_with_tolerance(df1, df2, rounded_columns: dict):
+#     if df1.shape != df2.shape:
+#         print("[X] Shape mismatch:", df1.shape, df2.shape)
+#         return False
+#
+#     for col in df1.columns:
+#         try:
+#             col1 = df1[col]
+#             col2 = df2[col]
+#
+#             try:
+#                 num1 = pd.to_numeric(col1, errors='raise')
+#                 num2 = pd.to_numeric(col2, errors='raise')
+#
+#                 if col in rounded_columns:
+#                     precision = rounded_columns[col]
+#                     num1 = num1.round(precision)
+#                     num2 = num2.round(precision)
+#
+#                     str1 = num1.apply(lambda x: f"{x:.{precision}f}" if pd.notnull(x) else "")
+#                     str2 = num2.apply(lambda x: f"{x:.{precision}f}" if pd.notnull(x) else "")
+#                 else:
+#                     str1 = num1.astype(str)
+#                     str2 = num2.astype(str)
+#
+#                 if not str1.equals(str2):
+#                     print(f"[X] Mismatch in numeric column '{col}':")
+#                     for i in range(len(str1)):
+#                         if str1[i] != str2[i]:
+#                             print(f"{i:>3} | {str1[i]} | {str2[i]}")
+#                     return False
+#
+#             except Exception:
+#                 str1 = col1.astype(str).str.strip().str.lower()
+#                 str2 = col2.astype(str).str.strip().str.lower()
+#                 if not str1.equals(str2):
+#                     print(f"[X] Mismatch in string column '{col}':")
+#                     for i in range(len(str1)):
+#                         if str1[i] != str2[i]:
+#                             print(f"{i:>3} | {str1[i]} | {str2[i]}")
+#                     return False
+#
+#         except Exception as e:
+#             print(f"[X] Exception in column '{col}': {e}")
+#             return False
+#
+#     return True
 
 
 def strip_sql_hints(query: str) -> str:
